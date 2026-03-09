@@ -273,5 +273,155 @@ function initPersistence() {
     });
 }
 
+// =========================================
+// M2-1: One-Click Transcript Cleanup
+// =========================================
+
+// --- API Configuration (set these to enable auto-cleanup) ---
+// To enable: set window.CLEANUP_API = { url: '...', key: '...' } before this script,
+// or modify the object below.
+const CLEANUP_API = window.CLEANUP_API || {
+    url: '',   // e.g. 'https://api.openai.com/v1/chat/completions'
+    key: '',   // e.g. 'sk-...'
+    model: '', // e.g. 'gpt-4o-mini'
+    timeoutMs: 30000
+};
+
+const CLEANUP_CACHE_PREFIX = 'm2.fixCache.';
+
+// Simple djb2 hash for cache keys
+function hashText(str) {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
+}
+
+function setFixStatus(message, type) {
+    const el = document.getElementById('fixStatus');
+    if (!el) return;
+    el.innerText = message;
+    el.className = 'fix-status';
+    if (type) el.classList.add('fix-status--' + type);
+}
+
+function showFixResult(text) {
+    const wrap = document.getElementById('fixResultWrap');
+    const result = document.getElementById('fixResult');
+    if (!wrap || !result) return;
+    result.innerText = text;
+    wrap.style.display = 'block';
+}
+
+function getFixSystemPrompt() {
+    return '你是一个中文逐字稿纠错助手。用户会发给你一段AI播客音频自动识别出来的逐字稿，里面包含同音错别字、标点错误或语病。' +
+        '请通读一遍，修正所有的错别字并理顺标点。' +
+        '【绝对铁律】：必须100%保留所有的口语化语气词（如"啊"、"呢"、"对"、"没错"、"哇"、"哎呀"）和原本的对话节奏，绝对不能把它改写成书面死板的文章！' +
+        '请直接输出修正后的完整纯文本，不要加任何解释。';
+}
+
+async function callCleanupAPI(inputText) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CLEANUP_API.timeoutMs || 30000);
+
+    try {
+        const response = await fetch(CLEANUP_API.url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + CLEANUP_API.key
+            },
+            body: JSON.stringify({
+                model: CLEANUP_API.model || 'gpt-4o-mini',
+                messages: [
+                    { role: 'system', content: getFixSystemPrompt() },
+                    { role: 'user', content: inputText }
+                ],
+                temperature: 0.3
+            }),
+            signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+            const errorBody = await response.text().catch(() => '');
+            throw new Error('API 返回错误 (' + response.status + ')：' + (errorBody.slice(0, 200) || response.statusText));
+        }
+
+        const data = await response.json();
+        const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+        if (!content) {
+            throw new Error('API 返回数据格式异常，未找到 content 字段。');
+        }
+        return content.trim();
+    } catch (err) {
+        clearTimeout(timeout);
+        if (err.name === 'AbortError') {
+            throw new Error('请求超时（' + ((CLEANUP_API.timeoutMs || 30000) / 1000) + '秒），请检查网络或稍后重试。');
+        }
+        throw err;
+    }
+}
+
+async function runTranscriptCleanup() {
+    const inputEl = document.getElementById('fixInput');
+    const btn = document.getElementById('fixBtn');
+    const manualDetails = document.getElementById('fixManualDetails');
+    const inputText = (inputEl ? inputEl.value : '').trim();
+
+    if (!inputText) {
+        showToast('请先粘贴需要纠错的逐字稿文本！', '#f59e0b');
+        if (inputEl) inputEl.focus();
+        return;
+    }
+
+    // Check cache first
+    const cacheKey = CLEANUP_CACHE_PREFIX + hashText(inputText);
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+        setFixStatus('✅ 命中缓存，已加载上次结果', 'success');
+        showFixResult(cached);
+        showToast('已从缓存加载纠错结果！');
+        return;
+    }
+
+    // Check if API is configured
+    if (!CLEANUP_API.url || !CLEANUP_API.key) {
+        setFixStatus('⚠️ 未配置 API，使用手工模式', 'warn');
+        showToast('未配置 API，请展开下方手工模式，复制 Prompt 发给大模型。', '#f59e0b');
+        if (manualDetails) manualDetails.open = true;
+        return;
+    }
+
+    // Start API call
+    btn.disabled = true;
+    btn.innerText = '⏳ 纠错中…';
+    setFixStatus('正在调用大模型，请稍候…', 'loading');
+
+    try {
+        const result = await callCleanupAPI(inputText);
+        // Cache the result
+        try {
+            localStorage.setItem(cacheKey, result);
+        } catch (e) {
+            // localStorage full — silently skip caching
+        }
+        showFixResult(result);
+        setFixStatus('✅ 纠错完成', 'success');
+        showToast('纠错完成！请检查结果并复制。');
+    } catch (err) {
+        setFixStatus('❌ ' + err.message, 'error');
+        showToast('纠错失败：' + err.message, '#ef4444');
+        if (manualDetails) manualDetails.open = true;
+    } finally {
+        btn.disabled = false;
+        btn.innerText = '🚀 一键纠错';
+    }
+}
+
+// =========================================
+
 initFlowControls();
 initPersistence();

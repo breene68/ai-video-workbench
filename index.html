@@ -114,15 +114,34 @@
 
                 <div class="card" style="border-left: 4px solid #10b981; background: #f0fdf4;">
                     <h3 style="border-bottom-color: #d1fae5;">✨ 3.1 一键纠正错别字 (必做)</h3>
-                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">把“音视频转文字工具”导出的带有错别字的文本，配合这段提示词发给大模型：</p>
-                    <div class="prompt-box" id="p-fix">这是一段AI播客音频自动识别出来的逐字稿。由于发音问题，里面包含一些同音错别字、标点错误或语病。
+                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">粘贴"音视频转文字工具"导出的原始文本，点击按钮即可一键纠错。未配 API 时自动切换手工模式。</p>
+
+                    <textarea id="fixInput" placeholder="在此粘贴从&quot;音视频转文字工具&quot;里复制的原始逐字稿文本…"></textarea>
+
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+                        <button id="fixBtn" onclick="runTranscriptCleanup()">🚀 一键纠错</button>
+                        <span id="fixStatus" class="fix-status"></span>
+                    </div>
+
+                    <!-- Result Area -->
+                    <div id="fixResultWrap" class="fix-result-wrap" style="display:none;">
+                        <h4 style="margin-bottom: 8px; color: #065f46;">✅ 纠错结果</h4>
+                        <div class="prompt-box" id="fixResult" style="background: #064e3b; border-color: #10b981; max-height: 300px; overflow-y: auto;"></div>
+                        <button class="outline" onclick="copyText('fixResult')" style="border-color: #10b981; color: #065f46;">📋 复制纠错结果</button>
+                    </div>
+
+                    <!-- Manual Fallback -->
+                    <details class="manual-fallback" id="fixManualDetails">
+                        <summary>📝 手工模式：复制 Prompt 自行发给大模型</summary>
+                        <div class="prompt-box" id="p-fix" style="margin-top: 10px;">这是一段AI播客音频自动识别出来的逐字稿。由于发音问题，里面包含一些同音错别字、标点错误或语病。
 请你帮我通读一遍，修正所有的错别字并理顺标点。
 
-【绝对铁律】：必须100%保留所有的口语化语气词（如“啊”、“呢”、“对”、“没错”、“哇”、“哎呀”）和原本的对话节奏，绝对不能把它改写成书面死板的文章！
+【绝对铁律】：必须100%保留所有的口语化语气词（如"啊"、"呢"、"对"、"没错"、"哇"、"哎呀"）和原本的对话节奏，绝对不能把它改写成书面死板的文章！
 
 请直接输出修正后的完整纯文本：
-[请在此粘贴你从“音视频转文字工具”里复制的原始文本]</div>
-                    <button class="outline" onclick="copyText('p-fix')">📋 复制【AI智能纠错】Prompt</button>
+[请在此粘贴你从"音视频转文字工具"里复制的原始文本]</div>
+                        <button class="outline" onclick="copyText('p-fix')">📋 复制【AI智能纠错】Prompt</button>
+                    </details>
                 </div>
 
                 <div class="card">
