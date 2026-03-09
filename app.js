@@ -91,9 +91,7 @@ function switchCoverTool(toolName) {
 // Copy text logic
 function copyText(elementId) {
     const text = document.getElementById(elementId).innerText;
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('已复制到剪贴板！可以直接去粘贴了。');
-    });
+    copyToClipboard(text, '已复制到剪贴板！可以直接去粘贴了。');
 }
 
 // Copy textarea content
@@ -103,9 +101,33 @@ function copyContent(elementId) {
         showToast('暂存箱是空的哦~', '#f59e0b');
         return;
     }
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('已复制暂存箱内容！');
-    });
+    copyToClipboard(text, '已复制暂存箱内容！');
+}
+
+async function copyToClipboard(text, successMessage) {
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast(successMessage);
+        return;
+    } catch {
+        const tempTextarea = document.createElement('textarea');
+        tempTextarea.value = text;
+        tempTextarea.style.position = 'fixed';
+        tempTextarea.style.opacity = '0';
+        document.body.appendChild(tempTextarea);
+        tempTextarea.focus();
+        tempTextarea.select();
+
+        const copied = document.execCommand('copy');
+        document.body.removeChild(tempTextarea);
+
+        if (copied) {
+            showToast(successMessage);
+            return;
+        }
+
+        showToast('复制失败：浏览器不允许访问剪贴板。', '#ef4444');
+    }
 }
 
 // Toast notification logic
