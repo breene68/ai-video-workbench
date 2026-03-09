@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI播客视频流水线 - 矩阵号工作台</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Sidebar Navigation -->
+    <div class="sidebar">
+        <div class="logo">
+            <span>🎬</span> 矩阵流水线 SOP
+        </div>
+        <ul class="nav-list">
+            <li class="nav-item active" data-target="step1"><span class="nav-icon">🔍</span> 1. 去哪找爆款</li>
+            <li class="nav-item" data-target="step2"><span class="nav-icon">🎙️</span> 2. NotebookLM配音</li>
+            <li class="nav-item" data-target="step3"><span class="nav-icon">✂️</span> 3. 纠错与分镜提取</li>
+            <li class="nav-item" data-target="step4"><span class="nav-icon">🖼️</span> 4. 批量生图与封面</li>
+            <li class="nav-item" data-target="step5"><span class="nav-icon">🎬</span> 5. 剪映后期合成</li>
+        </ul>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content" style="padding: 0;">
+
+        <!-- Global Category Selector -->
+        <div class="category-selector">
+            <label>当前视频赛道：</label>
+            <select id="globalCategory" onchange="updatePrompts()">
+                <option value="emotion">🎭 情感/家庭关系类 (边界感、断舍离)</option>
+                <option value="health">🩺 健康/科普避坑类 (长寿误区、防骗)</option>
+                <option value="commerce">🛒 商业/带货好物类 (养生粉、苹果醋等)</option>
+            </select>
+            <span style="font-size: 0.85rem; color: var(--text-muted); margin-left: 10px;">(切换赛道后，对应步骤的AI提示词会自动变更)</span>
+        </div>
+
+        <div style="padding: 30px 40px; height: calc(100vh - 65px); overflow-y: auto;">
+
+            <!-- Step 1: 选品 -->
+            <div id="step1" class="step-panel active">
+                <h2>第一步：寻找爆款“种子” (高维选题库)</h2>
+                <p class="subtitle">不要局限于鸡汤，对标“波波说说”，打透中老年人的“心理学+社会学+健康”痛点。</p>
+
+                <div class="card">
+                    <h3>🎯 顶级对标账号选题库 (点击使用)</h3>
+                    <div>
+                        <span class="tag">情感边界：得体退出 / 把子女当邻居</span>
+                        <span class="tag">家庭社会学：年夜饭AA制 / 父母天生偏心吗 / 传宗接代与平权</span>
+                        <span class="tag">自我觉醒：月入一万为何用旧手机 / 有钱=尊严 / 春节后空巢emo</span>
+                        <span class="tag">心理防坑：煤气灯效应(防PUA) / 黄昏恋3大坑 / 别叫醒午睡的老人</span>
+                        <span class="tag">硬核科普：50+长寿自测 / 跨越生命峰值 / 寿命取决于朋友圈</span>
+                    </div>
+                    <p style="margin-top: 15px; font-size: 0.9rem; color: var(--text-muted);">提示：找素材时，去知乎搜【心理学现象名】+【父母/中老年】，或者去头条搜这些社会争议话题的爆款文章。</p>
+                </div>
+
+                <div class="card">
+                    <h3>📝 暂存箱 (把找到的文案粘贴在这里备用)</h3>
+                    <textarea id="rawText" placeholder="将视频提取的逐字稿、公众号文章、或者高赞短评论粘贴在这里..."></textarea>
+                    <button onclick="copyContent('rawText')">📋 复制全部内容 (准备去喂给AI)</button>
+                </div>
+            </div>
+
+            <!-- Step 2: 语音生成 -->
+            <div id="step2" class="step-panel">
+                <h2>第二步：NotebookLM 专属“驯服”攻略</h2>
+                <p class="subtitle">把你找到的爆款文案喂给 NotebookLM，用强力指令逼它生成符合当前赛道的播客。</p>
+
+                <div class="card">
+                    <h3 style="display: flex; align-items: center; justify-content: space-between;">
+                        <span>🛠️ 正确喂给 NotebookLM 的方法</span>
+                        <a href="https://notebooklm.google.com/" target="_blank" style="font-size: 0.9rem; background: var(--primary); color: white; padding: 5px 12px; border-radius: 6px; text-decoration: none;">🚀 前往 NotebookLM</a>
+                    </h3>
+                    <ul class="checklist">
+                        <li><input type="checkbox" id="chk2-1"><label for="chk2-1"><b>上传来源：</b>把你找到的“爆款文案/逐字稿”，存为 TXT 文本，上传到 NotebookLM。</label></li>
+                        <li><input type="checkbox" id="chk2-2"><label for="chk2-2"><b>打开设置：</b>点击“生成音频概览”旁边的【自定义】按钮，准备输入下方的控场指令。</label></li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <h3>🤖 NotebookLM 强力控场咒语 (<span id="nblm-title" style="color:var(--primary);">情感类</span>)</h3>
+                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">这段话专治 NotebookLM 爱加戏的毛病，全选复制粘贴进去：</p>
+                    <div class="prompt-box" id="p-nlprompt">你们是一档专门针对中国50岁以上中老年女性的情感电台主持人（一男一女）。
+
+【必须遵守的核心铁律】：
+1. 绝对禁止说“今天我们拿到一份素材”、“根据这份对话记录”等学术性词汇。不要把这当成研讨会！
+2. 绝对禁止说“欢迎大家”、“很高兴您能抽出时间”等废话开场白。
+3. 请直接进入状态！一开场就用极度接地气、拉家常的语气抛出话题。比如：“这几天啊，有很多老姐妹都在群里抱怨……”或者“人过了五十岁啊，真的是不能心太软”。
+4. 对话内容必须完全沉浸在“婆媳矛盾”、“晚年退出儿女生活”、“别给儿女兜底”等真实生活场景中。
+5. 【最重要！】音频时长必须控制在 3到5分钟 之间，语言要干练扎心，直切痛点。</div>
+                    <button class="outline" onclick="copyText('p-nlprompt')">📋 复制【NotebookLM 控场指令】</button>
+                </div>
+
+                <div class="card" style="border-left: 4px solid #f59e0b;">
+                    <h3>⚠️ 关键过渡步骤：提取最终逐字稿</h3>
+                    <p style="font-size: 0.9rem; color: var(--text-muted);">NotebookLM 生成的音频有很多自由发挥的词。你必须把下载好的 MP3 拖进桌面的<b>“音视频转文字工具.html”</b>，将音频转换并复制成纯文本。<b>拿着这个纯最终版的文字，再进入下一步！</b></p>
+                </div>
+            </div>
+
+            <!-- Step 3: 提取分镜与提示词 -->
+            <div id="step3" class="step-panel">
+                <h2>第三步：AI 智能纠错 & 提取生图分镜</h2>
+                <p class="subtitle">语音识别难免有错别字，请先让大模型帮你“清洗”一遍文字，然后再切片出图。</p>
+
+                <div class="card" style="border-left: 4px solid #10b981; background: #f0fdf4;">
+                    <h3 style="border-bottom-color: #d1fae5;">✨ 3.1 一键纠正错别字 (必做)</h3>
+                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">把“音视频转文字工具”导出的带有错别字的文本，配合这段提示词发给大模型：</p>
+                    <div class="prompt-box" id="p-fix">这是一段AI播客音频自动识别出来的逐字稿。由于发音问题，里面包含一些同音错别字、标点错误或语病。
+请你帮我通读一遍，修正所有的错别字并理顺标点。
+
+【绝对铁律】：必须100%保留所有的口语化语气词（如“啊”、“呢”、“对”、“没错”、“哇”、“哎呀”）和原本的对话节奏，绝对不能把它改写成书面死板的文章！
+
+请直接输出修正后的完整纯文本：
+[请在此粘贴你从“音视频转文字工具”里复制的原始文本]</div>
+                    <button class="outline" onclick="copyText('p-fix')">📋 复制【AI智能纠错】Prompt</button>
+                </div>
+
+                <div class="card">
+                    <div class="tab-container">
+                        <button class="tab-btn active">📸 3.2 获取生图分镜 Prompt (<span id="img-title">情感类</span>)</button>
+                    </div>
+
+                    <div class="tab-content active">
+                        <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">
+                            带着清洗好的纯文本，点击前往 <a href="https://www.perplexity.ai/search/yi-xia-shi-gai-shi-pin-de-zhu-pzpIP8Y9QMOLxcLMwNTyDA" target="_blank" style="color:var(--primary); font-weight:bold;">Perplexity</a> 提交以下 Prompt 进行分镜：
+                        </p>
+                        <div class="prompt-box" id="p-img">我准备制作一条中老年【情感爆款视频】。以下是我刚才转换出来的【最终版播客逐字稿】：
+[请在此粘贴刚刚 AI 纠错完成的纯文本]
+
+请你帮我把这段文案，按照语意转折，切分成 10-15 个画面分段（每个分段大概两三句话，15秒左右）。
+并为每个分段写出用于豆包 AI 绘画的高质量中文提示词（Prompt）。
+
+【生图要求】：
+1. 风格：电影级光影 (Cinematic lighting), 逼真写实 (photorealistic), 温暖怀旧色调。
+2. 主体：大量使用50-60岁的中国中老年女性或夫妻的正面特写。展现他们面部的微表情，如眉头紧锁、若有所思、释怀微笑等。 辅以少量家庭冲突场景（如厨房、餐桌）或隐喻性画面。
+3. 情感色彩：从前期的“焦虑/委屈/隐忍”过渡到后期的“通透/释然/松弛感”。
+4. 禁忌：不要卡通或插画，绝对不要在画面中生成任何文字、汉字、字母、海报标题或水印！必须是纯净的摄影画面！人物必须是纯正的中国面孔。生成4:3横版比例。
+
+请以表格形式输出：
+| 分段序号 | 文案内容段落 | AI生图提示词(中文，包含画面构思与修饰词) |</div>
+                        <button class="outline" onclick="copyText('p-img')">📋 复制【提取生图分镜】Prompt</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: 批量生图 -->
+            <div id="step4" class="step-panel">
+                <h2>第四步：批量生成情绪图片 & 高点击封面</h2>
+                <p class="subtitle">分镜负责视频的留存率，而封面负责点击率（CTR）。封面必须单独制作，追求“一眼入魂”。</p>
+
+                <div class="card" style="background: #fffbeb; border-color: #fde68a;">
+                    <h3 style="border-bottom-color: #fde68a; display: flex; align-items: center; justify-content: space-between;">
+                        <span>🔥 4.1 获取高点击率封面图 Prompt (<span id="cover-title">情感类</span>)</span>
+                    </h3>
+
+                    <div class="tool-toggle">
+                        <button class="active" onclick="switchCoverTool('doubao')" id="btn-doubao">豆包(纯净底图版)</button>
+                        <button onclick="switchCoverTool('nanobanana')" id="btn-nanobanana">NanoBanana(场景融合字版)</button>
+                    </div>
+
+                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);" id="cover-desc">豆包生图最稳妥。生成4:3纯净底图，绝对禁止文字，最后在剪映里居中放置并打上大字报标题。</p>
+
+                    <div class="prompt-box" id="p-cover" style="background: #1f2937; border-color: #f59e0b;">我正在制作一条中老年【情感/家庭关系】主题的爆款短视频。这是我的视频核心内容：
+[在此粘贴你的视频核心主题、扎心金句或第一段文案]
+
+请你帮我构思一个极具视觉冲击力的视频封面画面，并写出一段用于豆包AI绘画的【高质量中文提示词】。
+要求：
+1. 画面中心是50多岁的中国阿姨特写，表情极具张力（必须与文案情绪高度共鸣，如流泪、或者释然的微笑）。
+2. 背景深色冷色调，人物暖光，形成强烈明暗对比。
+3. 必须包含强制指令：绝对不要生成任何文字、字母、海报标题或水印！必须是纯净的摄影画面。不要卡通。生成4:3横版比例（后期会在剪映里将其居中放置在9:16的黑底画布上）。
+
+请直接输出你可以发给豆包的中文提示词：</div>
+                    <button class="outline" onclick="copyText('p-cover')" style="border-color: #f59e0b; color: #d97706;">📋 复制【提炼封面提示词】Prompt</button>
+                </div>
+
+                <div class="card" style="border-left: 4px solid var(--primary);">
+                    <h3 style="display: flex; align-items: center; justify-content: space-between;">
+                        <span>🎨 4.2 拿到提示词后，前往生图</span>
+                        <a href="https://www.doubao.com/" target="_blank" style="font-size: 0.9rem; background: var(--primary); color: white; padding: 5px 12px; border-radius: 6px; text-decoration: none;">🚀 打开豆包 AI 绘画</a>
+                    </h3>
+                    <p style="font-size: 0.9rem; color: var(--text-muted);">把刚才大模型为你写好的专属封面提示词发给豆包或NanoBanana。然后再根据第三步的表格批量生成普通分镜图。分镜图记得带上下面的后缀以彻底杜绝乱码文字：</p>
+                </div>
+
+                <div class="card">
+                    <h3>✨ 万能分镜画质增强后缀 (<span id="suffix-title">电影感光影</span>)</h3>
+                    <div class="prompt-box" id="prompt2">无文字，无字母，无水印，无海报标题，纯净画面。电影级光影，柔和阴影，超高细节，写实摄影，8k分辨率，35mm镜头，获奖摄影作品，充满情绪的色彩分级，4:3横版比例</div>
+                    <button class="outline" onclick="copyText('prompt2')">📋 复制分镜画质后缀</button>
+                </div>
+
+                <div class="card">
+                    <h3>🛠️ 生图工作流核对</h3>
+                    <ul class="checklist">
+                        <li><input type="checkbox" id="chk4-1"><label for="chk4-1"><b>工具选择：</b>分镜图强烈推荐使用 <b>豆包 AI 绘画</b> 保证画面纯净。封面图根据你选的模式使用对应工具。</label></li>
+                        <li><input type="checkbox" id="chk4-2"><label for="chk4-2"><b>比例设置：</b>直接要求“生成4:3横版比例”或“生成4:3比例的图片”。</label></li>
+                        <li><input type="checkbox" id="chk4-3"><label for="chk4-3"><b>保存命名：</b>将封面图命名为 <code>cover.jpg</code>，其他图按顺序保存为 <code>01.jpg, 02.jpg ...</code></label></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Step 5: 剪映后期 -->
+            <div id="step5" class="step-panel">
+                <h2>第五步：剪映排版与导出 (核心工艺)</h2>
+                <p class="subtitle">把音频和图片组装成高完播率的“伪动态”视频，并加上具有悬念的大字报标题。</p>
+
+                <div class="card" style="border-left: 4px solid #ef4444; background: #fef2f2;">
+                    <h3 style="border-bottom-color: #fecaca; color: #b91c1c;">🔥 5.1 获取高点击大字报标题 (必做)</h3>
+                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: #7f1d1d;">好的标题能让点击率翻倍。把纯文本逐字稿和下面的指令发给大模型，让它帮你起标题：</p>
+                    <div class="prompt-box" id="p-title" style="background: #1f2937; border-color: #ef4444;">你现在是一个顶级短视频爆款文案操盘手。我有一篇针对中老年【情感/家庭关系】赛道的短视频逐字稿。
+[在此粘贴你的纯文本逐字稿]
+
+请帮我提炼出5个用于视频画面顶部的“大字报标题”。
+【排版格式要求】：必须是上下两行的双标题结构！
+1. 第一行（主标题）：5-8个字，必须极度吸睛、制造悬念或情绪冲突（在剪映里我会把它标成黄色）。例如：“倒在玄关的父亲”、“除夕夜的冷暴力”。
+2. 第二行（副标题）：8-15个字，用于解释核心冲突、给出价值判断或提出直击灵魂的反问（在剪映里我会把它标成白色）。例如：“隐瞒病情，是爱还是自私？”、“血缘，是唯一的羁绊吗？”
+
+请直接输出5组选项，格式如下：
+选项一：
+主标题：[黄字] XXXX
+副标题：[白字] XXXXXX</div>
+                    <button class="outline" onclick="copyText('p-title')" style="border-color: #ef4444; color: #b91c1c;">📋 复制【大字报标题】Prompt</button>
+                </div>
+
+                <div class="card">
+                    <h3>📐 工程设置标准参数 (照做即可)</h3>
+                    <ul class="checklist">
+                        <li><input type="checkbox" id="chk5-1"><label for="chk5-1"><b>画布比例：</b>新建草稿，比例设为 <b>9:16</b> (竖屏)，背景颜色设为 <b>纯黑色</b>。</label></li>
+                        <li><input type="checkbox" id="chk5-2"><label for="chk5-2"><b>顶层排版：</b>无论你用哪种方式生图，都要把大模型给你的主标题（换成显眼的亮黄色）和副标题（纯白色），用粗黑体固定在9:16黑底画布的【最上方】（即图片上方的黑色空白处）。</label></li>
+                        <li><input type="checkbox" id="chk5-3"><label for="chk5-3"><b>拖入素材：</b>先放音频，使用“识别字幕”。然后把封面图和 15 张分镜图片拖入主视频轨道。<b>注意：图片是4:3比例，请将其【垂直居中】放置在9:16的画布中间，让画面上下自然留出黑色背景。</b></label></li>
+                        <li><input type="checkbox" id="chk5-4"><label for="chk5-4"><b>对齐卡点：</b>对照大模型给的表格，拖拽每张图片的长度，使其与音频说话的内容节点对齐（约10-15秒切一张）。</label></li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <h3>🪄 让图片“活”起来的魔法设置</h3>
+                    <ul class="checklist">
+                        <li><input type="checkbox" id="chk5-5"><label for="chk5-5"><b>缓慢推近 (关键帧)：</b>选中图片，在开头打一个缩放关键帧设为 <b>100%</b>，在结尾打一个缩放关键帧设为 <b>105%</b>。</label></li>
+                        <li><input type="checkbox" id="chk5-6"><label for="chk5-6"><b>转场效果：</b>全选所有图片，添加转场 -> 基础 -> <b>叠化 (0.5s - 1s)</b>。</label></li>
+                        <li><input type="checkbox" id="chk5-7"><label for="chk5-7"><b>背景音乐：</b>加一首治愈系纯音乐，音量调低至 <b>10%</b> 左右，切勿盖过人声。</label></li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <h3>✍️ 底部固定排版 (防限流必备)</h3>
+                    <p style="font-size: 0.9rem; margin-bottom: 10px;"><b>底部固定免责声明 (规避平台审查，一键复制，字号调小)：</b></p>
+                    <div class="prompt-box" id="prompt3">本视频内容基于公开心理学理论及科普资料整理，旨在分享生活智慧与家庭相处之道，仅供生活参考。内容不涉及任何疾病的医疗诊断与治疗。如有严重的心理困扰或家庭纠纷，请线下咨询专业心理咨询师或医生。</div>
+                    <button class="outline" onclick="copyText('prompt3')">📋 复制免责声明</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">复制成功！</div>
+
+    <script src="data/prompts.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
