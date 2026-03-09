@@ -36,7 +36,16 @@
             <span style="font-size: 0.85rem; color: var(--text-muted); margin-left: 10px;">(切换赛道后，对应步骤的AI提示词会自动变更)</span>
         </div>
 
-        <div style="padding: 30px 40px; height: calc(100vh - 65px); overflow-y: auto;">
+        <div class="flow-bar">
+            <button class="outline" id="prevStepBtn">⬅️ 上一步</button>
+            <span id="currentStepLabel">当前步骤：第1步</span>
+            <div class="flow-actions">
+                <button class="outline" id="approveBtn">✅ 同意继续</button>
+                <button id="nextStepBtn">下一步 ➡️</button>
+            </div>
+        </div>
+
+        <div style="padding: 30px 40px; height: calc(100vh - 121px); overflow-y: auto;">
 
             <!-- Step 1: 选品 -->
             <div id="step1" class="step-panel active">

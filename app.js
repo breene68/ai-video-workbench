@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
 // Tab switching logic
 const navItems = document.querySelectorAll('.nav-item');
 const panels = document.querySelectorAll('.step-panel');
+const approvedSteps = new Set();
 
 function setActiveStep(stepId, persist = true) {
     navItems.forEach(nav => {
@@ -21,6 +22,8 @@ function setActiveStep(stepId, persist = true) {
     if (persist) {
         localStorage.setItem(STORAGE_KEYS.step, stepId);
     }
+
+    updateFlowUI();
 }
 
 navItems.forEach(item => {
@@ -116,6 +119,81 @@ function showToast(message, color = '#10b981') {
     }, 2500);
 }
 
+function getCurrentStepIndex() {
+    return Array.from(navItems).findIndex(item => item.classList.contains('active'));
+}
+
+function updateFlowUI() {
+    const index = getCurrentStepIndex();
+    const prevBtn = document.getElementById('prevStepBtn');
+    const nextBtn = document.getElementById('nextStepBtn');
+    const approveBtn = document.getElementById('approveBtn');
+    const label = document.getElementById('currentStepLabel');
+
+    if (index < 0 || !prevBtn || !nextBtn || !approveBtn || !label) {
+        return;
+    }
+
+    const currentStepId = navItems[index].getAttribute('data-target');
+    const currentStepText = navItems[index].innerText.trim();
+
+    prevBtn.disabled = index === 0;
+    nextBtn.disabled = index === navItems.length - 1;
+    label.innerText = '当前步骤：' + currentStepText;
+
+    const approved = approvedSteps.has(currentStepId);
+    approveBtn.classList.toggle('approved', approved);
+    approveBtn.innerText = approved ? '✅ 已同意继续' : '✅ 同意继续';
+}
+
+function initFlowControls() {
+    const prevBtn = document.getElementById('prevStepBtn');
+    const nextBtn = document.getElementById('nextStepBtn');
+    const approveBtn = document.getElementById('approveBtn');
+
+    if (!prevBtn || !nextBtn || !approveBtn) {
+        return;
+    }
+
+    prevBtn.addEventListener('click', () => {
+        const index = getCurrentStepIndex();
+        if (index > 0) {
+            const prevStepId = navItems[index - 1].getAttribute('data-target');
+            setActiveStep(prevStepId);
+        }
+    });
+
+    nextBtn.addEventListener('click', () => {
+        const index = getCurrentStepIndex();
+        if (index < 0 || index >= navItems.length - 1) {
+            return;
+        }
+
+        const currentStepId = navItems[index].getAttribute('data-target');
+        if (!approvedSteps.has(currentStepId)) {
+            showToast('请先点击“同意继续”再进入下一步。', '#f59e0b');
+            return;
+        }
+
+        const nextStepId = navItems[index + 1].getAttribute('data-target');
+        setActiveStep(nextStepId);
+    });
+
+    approveBtn.addEventListener('click', () => {
+        const index = getCurrentStepIndex();
+        if (index < 0) {
+            return;
+        }
+
+        const currentStepId = navItems[index].getAttribute('data-target');
+        approvedSteps.add(currentStepId);
+        updateFlowUI();
+        showToast('当前步骤已同意继续。');
+    });
+
+    updateFlowUI();
+}
+
 function loadChecklistState() {
     const raw = localStorage.getItem(STORAGE_KEYS.checklist);
     if (!raw) {
@@ -147,6 +225,8 @@ function initPersistence() {
     const savedStep = localStorage.getItem(STORAGE_KEYS.step);
     if (savedStep && document.getElementById(savedStep)) {
         setActiveStep(savedStep, false);
+    } else {
+        updateFlowUI();
     }
 
     const savedDraft = localStorage.getItem(STORAGE_KEYS.draftText);
@@ -171,4 +251,5 @@ function initPersistence() {
     });
 }
 
+initFlowControls();
 initPersistence();

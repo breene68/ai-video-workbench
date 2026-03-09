@@ -77,6 +77,37 @@ textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 
 .category-selector select { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 1rem; color: var(--primary); font-weight: 500; outline: none; cursor: pointer; }
 .category-selector select:focus { border-color: var(--primary); }
 
+/* Flow Bar */
+.flow-bar {
+    background: #f8fafc;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 25px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: sticky;
+    top: 65px;
+    z-index: 9;
+}
+
+#currentStepLabel {
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.flow-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#approveBtn.approved {
+    background: #10b981;
+    color: #fff;
+    border-color: #10b981;
+}
+
 /* Tool Toggle */
 .tool-toggle { display: flex; background: var(--bg); border-radius: 8px; padding: 4px; margin-bottom: 15px; width: fit-content; }
 .tool-toggle button { background: transparent; color: var(--text-muted); border: none; padding: 6px 16px; border-radius: 6px; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: all 0.2s; }
