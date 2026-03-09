@@ -16,7 +16,8 @@
             <span>🎬</span> 矩阵流水线 SOP
         </div>
         <ul class="nav-list">
-            <li class="nav-item active" data-target="step1"><span class="nav-icon">🔍</span> 1. 去哪找爆款</li>
+            <li class="nav-item active" data-target="step0"><span class="nav-icon">🔥</span> 0. 找爆款与自动生成</li>
+            <li class="nav-item" data-target="step1"><span class="nav-icon">🔍</span> 1. 结构与剧本暂存</li>
             <li class="nav-item" data-target="step2"><span class="nav-icon">🎙️</span> 2. NotebookLM配音</li>
             <li class="nav-item" data-target="step3"><span class="nav-icon">✂️</span> 3. 纠错与分镜提取</li>
             <li class="nav-item" data-target="step4"><span class="nav-icon">🖼️</span> 4. 批量生图与封面</li>
@@ -50,10 +51,70 @@
 
         <div style="padding: 30px 40px; height: calc(100vh - 121px); overflow-y: auto;">
 
+            <!-- Step 0: 找爆款与自动拆解重组 -->
+            <div id="step0" class="step-panel active">
+                <h2>第〇步：爆款分析与生成 (MVP)</h2>
+                <p class="subtitle">批量输入对标爆款，提取共性基因并一键生成新的原创爆款文案。</p>
+
+                <div class="card">
+                    <h3>🔥 0.1 输入爆款文案</h3>
+                    <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 15px;">
+                        最多粘贴5篇爆款文案，系统将提炼出共性结构。每段限3000字。</p>
+                    <div class="viral-inputs-grid">
+                        <textarea id="viralInput1" placeholder="爆款文案 1"></textarea>
+                        <textarea id="viralInput2" placeholder="爆款文案 2"></textarea>
+                        <textarea id="viralInput3" placeholder="爆款文案 3"></textarea>
+                        <textarea id="viralInput4" placeholder="爆款文案 4"></textarea>
+                        <textarea id="viralInput5" placeholder="爆款文案 5"></textarea>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <input type="text" id="viralKeyword" placeholder="可选：输入你的原创话题/关键词（例如：买房、停药、边界感）"
+                            style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border);">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>🛠️ 0.2 执行提取与重组</h3>
+                    <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+                        <button id="analyzeBtn" onclick="runViralAnalysis()">🚀 一键拆解重组</button>
+                        <span id="analyzeStatus" class="fix-status"></span>
+                    </div>
+
+                    <div id="viralResultWrap" class="fix-result-wrap" style="display:none; padding-bottom: 20px;">
+                        <h4 style="color: var(--primary); margin-bottom: 10px;">📊 提取到的爆款基因</h4>
+                        <div id="viralStructure"
+                            style="background: #f9fafb; padding: 15px; border-radius: 6px; font-size: 0.95rem; line-height: 1.6; margin-bottom: 15px;">
+                        </div>
+
+                        <h4 style="color: var(--primary); margin-bottom: 10px;">✍️ 原创新稿</h4>
+                        <textarea id="viralNewDraft" rows="8"
+                            style="width: 100%; padding: 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.95rem; line-height: 1.6; margin-bottom: 10px;"></textarea>
+
+                        <div style="display: flex; gap: 10px;">
+                            <button onclick="copyViralDraft()">📋 复制新稿</button>
+                            <button class="outline" onclick="passDraftToStep1()"
+                                style="border-color: #10b981; color: #10b981;">➡️ 使用该原创新稿 (转至下一步并暂存)</button>
+                        </div>
+                    </div>
+
+                    <!-- Manual Fallback -->
+                    <details class="manual-fallback" id="viralManualDetails">
+                        <summary>📝 手工模式：复制 Prompt 自行发给大模型</summary>
+                        <div class="prompt-box" id="p-viral" style="margin-top: 10px;">你是一个顶级的短视频爆款拆解专家与编导。
+                            我将发给你几篇点赞极高的中老年赛道爆款文案。
+                            请你：
+                            1. 分析并提炼出这些爆款的【共性结构】（如：痛点引入->案例->反转->金句升华）。
+                            2. 提取出3条黄金开场Hook、3条核心痛点、3条金句。
+                            3. （重要）结合这些结构和痛点，以及可能提供的话题关键词，重新创作一篇【完全原创的新稿】。语气要像真实的电台主持人，贴近50岁中国女性的语境，要求逻辑严密、情感扎心。</div>
+                        <button class="outline" onclick="copyText('p-viral')">📋 复制【拆解分析】Prompt</button>
+                    </details>
+                </div>
+            </div>
+
             <!-- Step 1: 选品 -->
-            <div id="step1" class="step-panel active">
-                <h2>第一步：寻找爆款“种子” (高维选题库)</h2>
-                <p class="subtitle">不要局限于鸡汤，对标“波波说说”，打透中老年人的“心理学+社会学+健康”痛点。</p>
+            <div id="step1" class="step-panel">
+                <h2>第一步：结构与剧本暂存</h2>
+                <p class="subtitle">在这里暂存从找爆款步骤或是外部获取的原始文案。</p>
 
                 <div class="card">
                     <h3>🎯 顶级对标账号选题库 (点击使用)</h3>
