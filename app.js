@@ -643,6 +643,189 @@ async function runStoryboardSplit() {
 }
 
 // =========================================
+// M3-1: Viral Gene Analyzer (Step 0)
+// =========================================
+
+const VIRAL_CACHE_PREFIX = 'm3.viralCache.';
+
+function setViralStatus(message, type) {
+    const el = document.getElementById('analyzeStatus');
+    if (!el) return;
+    el.innerText = message;
+    el.className = 'fix-status';
+    if (type) el.classList.add('fix-status--' + type);
+}
+
+function copyViralDraft() {
+    const text = document.getElementById('viralNewDraft').value;
+    if (!text) { showToast('还没有新稿可复制。', '#f59e0b'); return; }
+    copyToClipboard(text, '已复制原创爆款新稿！');
+}
+
+function passDraftToStep1() {
+    const text = document.getElementById('viralNewDraft').value;
+    if (!text) { showToast('还没有新稿可使用。', '#f59e0b'); return; }
+
+    // Set text to rawText fallback
+    const rawTextEl = document.getElementById('rawText');
+    if (rawTextEl) {
+        rawTextEl.value = text;
+        showToast('新稿已填入剧本暂存箱！');
+    }
+
+    // Switch navigation to step1
+    const nli = Array.from(document.querySelectorAll('.nav-item')).find(el => el.getAttribute('data-target') === 'step1');
+    if (nli) nli.click();
+}
+
+async function runViralAnalysis() {
+    const btn = document.getElementById('analyzeBtn');
+    const manualDetails = document.getElementById('viralManualDetails');
+    const resultWrap = document.getElementById('viralResultWrap');
+
+    // Collect inputs
+    let inputs = [];
+    for (let i = 1; i <= 5; i++) {
+        const el = document.getElementById('viralInput' + i);
+        if (el) {
+            const val = el.value.trim();
+            if (val) {
+                if (val.length > 3000) {
+                    showToast('第 ' + i + ' 篇文案字数超过3000字，为节省 Token 请删减后再试！', '#f59e0b');
+                    return;
+                }
+                inputs.push(val);
+            }
+        }
+    }
+
+    if (inputs.length === 0) {
+        showToast('请至少粘贴1篇爆款文案！', '#f59e0b');
+        return;
+    }
+
+    const kwEl = document.getElementById('viralKeyword');
+    const keyword = kwEl ? kwEl.value.trim() : '';
+
+    // Check Cache
+    const cacheStr = inputs.join('|') + '|||' + keyword;
+    const cacheKey = VIRAL_CACHE_PREFIX + hashText(cacheStr);
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+        try {
+            const parsed = JSON.parse(cached);
+            document.getElementById('viralStructure').innerHTML = parsed.structure.replace(/\n/g, '<br>');
+            document.getElementById('viralNewDraft').value = parsed.draft;
+            resultWrap.style.display = 'block';
+            setViralStatus('✅ 命中缓存，已加载上次分析结果', 'success');
+            showToast('已从缓存加载！');
+            return;
+        } catch (e) {
+            localStorage.removeItem(cacheKey);
+        }
+    }
+
+    // API Check
+    if (!CLEANUP_API.url || !CLEANUP_API.key) {
+        setViralStatus('⚠️ 未配置 API，使用手工模式', 'warn');
+        showToast('未配置 API，请展开下方手工模式自行发给大模型。', '#f59e0b');
+        if (manualDetails) manualDetails.open = true;
+        return;
+    }
+
+    // Prompt Construction
+    const sysPrompt = '你是一个顶级的短视频爆款拆解专家与编导。我将发给你几篇点赞极高的中老年赛道爆款文案。\n' +
+        '请你：\n' +
+        '1. 分析并提炼出这些爆款的【共性结构】。\n' +
+        '2. 提取出3条黄金开场Hook、3条核心痛点、3条金句。\n' +
+        '3. （重要）结合这些结构和痛点' + (keyword ? '，以及关键词【' + keyword + '】' : '') + '，重新创作一篇【完全原创的新稿】。语气要像真实的电台主持人，贴近50岁中国女性的语境，逻辑严密、情感扎心。\n\n' +
+        '要求输出格式必须分为上下两部分，中间用分隔符 ===DRAFT=== 隔开。\n' +
+        '格式示范：\n' +
+        '#### 爆款共性结构\n' +
+        '- 痛点引入: ...\n' +
+        '#### 黄金Hook与核心痛点\n' +
+        '...\n' +
+        '===DRAFT===\n' +
+        '创作的新文案正文直接放在这里（不用写标题）';
+
+    const userContent = inputs.map((text, idx) => '【爆款文案 ' + (idx + 1) + '】:\n' + text).join('\n\n');
+
+    btn.disabled = true;
+    btn.innerText = '⏳ 分析重组中(约需数十秒)…';
+    setViralStatus('正在分析痛点并生成新稿，请稍候…', 'loading');
+
+    const callApi = async () => {
+        const controller = new AbortController();
+        const timeoutMs = 60000;
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            const resp = await fetch(CLEANUP_API.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CLEANUP_API.key },
+                body: JSON.stringify({
+                    model: CLEANUP_API.model || 'gpt-4o-mini',
+                    messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userContent }],
+                    temperature: 0.6
+                }),
+                signal: controller.signal
+            });
+            clearTimeout(timer);
+            if (!resp.ok) {
+                const errBody = await resp.text().catch(() => '');
+                throw new Error('API错误: (' + resp.status + ') ' + errBody.slice(0, 50));
+            }
+            const data = await resp.json();
+            const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+            if (!content) throw new Error('API 返回数据格式异常，未找到 content 字段。');
+            return content.trim();
+        } catch (err) {
+            clearTimeout(timer);
+            if (err.name === 'AbortError') throw new Error('请求超时（60秒），原文本可能过于庞大，请稍后重试。');
+            throw err;
+        }
+    };
+
+    // Run with 1 retry
+    let resultText = '';
+    try {
+        resultText = await callApi();
+    } catch (err) {
+        setViralStatus('请求出错，正在重试第1次...', 'warn');
+        try {
+            resultText = await callApi();
+        } catch (err2) {
+            setViralStatus('❌ 重试失败: ' + err2.message, 'error');
+            showToast('分析失败：' + err2.message, '#ef4444');
+            if (manualDetails) manualDetails.open = true;
+            btn.disabled = false;
+            btn.innerText = '🚀 一键拆解重组';
+            return;
+        }
+    }
+
+    // Parsing response
+    const parts = resultText.split('===DRAFT===');
+    let structure = parts[0] ? parts[0].trim() : '（未能提取到结构内容）';
+    let draft = parts[1] ? parts[1].trim() : resultText;
+
+    // Save to Cache and Render
+    try {
+        localStorage.setItem(cacheKey, JSON.stringify({ structure: structure, draft: draft }));
+    } catch (e) { }
+
+    document.getElementById('viralStructure').innerHTML = escapeHtml(structure).replace(/\n/g, '<br>');
+    document.getElementById('viralNewDraft').value = draft;
+    resultWrap.style.display = 'block';
+
+    setViralStatus('✅ 拆解重组完成！', 'success');
+    showToast('原创新稿已生成！');
+
+    btn.disabled = false;
+    btn.innerText = '🚀 一键拆解重组';
+}
+
+// =========================================
 
 initFlowControls();
 initPersistence();
