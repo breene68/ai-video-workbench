@@ -1,24 +1,39 @@
+const STORAGE_KEYS = {
+    category: 'm1.currentCategory',
+    step: 'm1.currentStep',
+    draftText: 'm1.rawText',
+    checklist: 'm1.checklistState'
+};
+
 // Tab switching logic
 const navItems = document.querySelectorAll('.nav-item');
 const panels = document.querySelectorAll('.step-panel');
 
+function setActiveStep(stepId, persist = true) {
+    navItems.forEach(nav => {
+        nav.classList.toggle('active', nav.getAttribute('data-target') === stepId);
+    });
+
+    panels.forEach(panel => {
+        panel.classList.toggle('active', panel.id === stepId);
+    });
+
+    if (persist) {
+        localStorage.setItem(STORAGE_KEYS.step, stepId);
+    }
+}
+
 navItems.forEach(item => {
     item.addEventListener('click', () => {
-        // Remove active class from all
-        navItems.forEach(nav => nav.classList.remove('active'));
-        panels.forEach(panel => panel.classList.remove('active'));
-
-        // Add active class to clicked
-        item.classList.add('active');
         const targetId = item.getAttribute('data-target');
-        document.getElementById(targetId).classList.add('active');
+        setActiveStep(targetId);
     });
 });
 
 let currentCoverTool = 'doubao';
 
 // Update prompts based on selection
-function updatePrompts() {
+function updatePrompts(silent = false) {
     const category = document.getElementById('globalCategory').value;
     const data = promptDB[category];
 
@@ -43,7 +58,10 @@ function updatePrompts() {
     document.getElementById('suffix-title').innerText = data.suffixTitle;
     document.getElementById('prompt2').innerText = data.suffix;
 
-    showToast('已切换至【' + data.title + '】专属提示词！', '#3b82f6');
+    localStorage.setItem(STORAGE_KEYS.category, category);
+    if (!silent) {
+        showToast('已切换至【' + data.title + '】专属提示词！', '#3b82f6');
+    }
 }
 
 // Switch Cover Tool Logic
@@ -97,3 +115,60 @@ function showToast(message, color = '#10b981') {
         toast.classList.remove('show');
     }, 2500);
 }
+
+function loadChecklistState() {
+    const raw = localStorage.getItem(STORAGE_KEYS.checklist);
+    if (!raw) {
+        return {};
+    }
+
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
+}
+
+function saveChecklistState(state) {
+    localStorage.setItem(STORAGE_KEYS.checklist, JSON.stringify(state));
+}
+
+function initPersistence() {
+    const categoryEl = document.getElementById('globalCategory');
+    const rawTextEl = document.getElementById('rawText');
+
+    const savedCategory = localStorage.getItem(STORAGE_KEYS.category);
+    if (savedCategory && promptDB[savedCategory]) {
+        categoryEl.value = savedCategory;
+    }
+
+    updatePrompts(true);
+
+    const savedStep = localStorage.getItem(STORAGE_KEYS.step);
+    if (savedStep && document.getElementById(savedStep)) {
+        setActiveStep(savedStep, false);
+    }
+
+    const savedDraft = localStorage.getItem(STORAGE_KEYS.draftText);
+    if (savedDraft !== null) {
+        rawTextEl.value = savedDraft;
+    }
+    rawTextEl.addEventListener('input', () => {
+        localStorage.setItem(STORAGE_KEYS.draftText, rawTextEl.value);
+    });
+
+    const checklistState = loadChecklistState();
+    document.querySelectorAll('.checklist input[type="checkbox"]').forEach(checkbox => {
+        const key = checkbox.id;
+        if (Object.prototype.hasOwnProperty.call(checklistState, key)) {
+            checkbox.checked = Boolean(checklistState[key]);
+        }
+
+        checkbox.addEventListener('change', () => {
+            checklistState[key] = checkbox.checked;
+            saveChecklistState(checklistState);
+        });
+    });
+}
+
+initPersistence();
