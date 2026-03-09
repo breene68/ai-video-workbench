@@ -52,6 +52,13 @@ function updatePrompts(silent = false) {
     document.getElementById('cover-title').innerText = data.title;
     document.getElementById('p-cover').innerText = data.cover[currentCoverTool];
 
+    // Handle generic track hints for M2-3
+    const isEmotion = category === 'emotion';
+    const sbHint = document.getElementById('sb-hint');
+    const coverHint = document.getElementById('cover-hint');
+    if (sbHint) sbHint.style.display = isEmotion ? 'none' : 'inline-block';
+    if (coverHint) coverHint.style.display = isEmotion ? 'none' : 'inline-block';
+
     // Update Title Prompt step
     if (document.getElementById('p-title')) {
         document.getElementById('p-title').innerText = data.titlePrompt;
