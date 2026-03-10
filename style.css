@@ -162,6 +162,38 @@ p.subtitle {
     background: #fff;
 }
 
+/* API Config Panel */
+.api-config-card summary::-webkit-details-marker {
+    display: none;
+}
+
+.api-fields-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.api-fields-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.api-fields-grid input {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.api-fields-grid input:focus {
+    border-color: var(--primary);
+    outline: none;
+}
+
 .prompt-box {
     background: #1e293b;
     color: #f8fafc;

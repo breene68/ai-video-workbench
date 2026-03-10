@@ -284,15 +284,107 @@ function initPersistence() {
 // M2-1: One-Click Transcript Cleanup
 // =========================================
 
-// --- API Configuration (set these to enable auto-cleanup) ---
-// To enable: set window.CLEANUP_API = { url: '...', key: '...' } before this script,
-// or modify the object below.
-const CLEANUP_API = window.CLEANUP_API || {
-    url: '',   // e.g. 'https://api.openai.com/v1/chat/completions'
-    key: '',   // e.g. 'sk-...'
-    model: '', // e.g. 'gpt-4o-mini'
-    timeoutMs: 30000
-};
+// --- API Configuration (persisted in localStorage) ---
+const API_STORAGE_KEY = 'm3.apiConfig';
+
+let CLEANUP_API = { url: '', key: '', model: '', timeoutMs: 30000 };
+
+function loadApiConfig() {
+    try {
+        const saved = localStorage.getItem(API_STORAGE_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            CLEANUP_API.url = parsed.url || '';
+            CLEANUP_API.key = parsed.key || '';
+            CLEANUP_API.model = parsed.model || '';
+            CLEANUP_API.timeoutMs = parsed.timeoutMs || 30000;
+        }
+    } catch (e) { }
+    const urlEl = document.getElementById('cfgApiUrl');
+    const keyEl = document.getElementById('cfgApiKey');
+    const modelEl = document.getElementById('cfgModel');
+    const timeoutEl = document.getElementById('cfgTimeout');
+    if (urlEl) urlEl.value = CLEANUP_API.url;
+    if (keyEl) keyEl.value = CLEANUP_API.key;
+    if (modelEl) modelEl.value = CLEANUP_API.model;
+    if (timeoutEl) timeoutEl.value = CLEANUP_API.timeoutMs ? CLEANUP_API.timeoutMs / 1000 : 30;
+    updateApiBadge();
+}
+
+function updateApiBadge() {
+    const badge = document.getElementById('apiConfigBadge');
+    if (!badge) return;
+    if (CLEANUP_API.url && CLEANUP_API.key) {
+        badge.textContent = '\u2705 \u5df2\u914d\u7f6e';
+        badge.style.background = '#d1fae5';
+        badge.style.color = '#065f46';
+    } else {
+        badge.textContent = '\u672a\u914d\u7f6e';
+        badge.style.background = '#fef3c7';
+        badge.style.color = '#92400e';
+    }
+}
+
+function saveApiConfig() {
+    const url = (document.getElementById('cfgApiUrl').value || '').trim();
+    const key = (document.getElementById('cfgApiKey').value || '').trim();
+    const model = (document.getElementById('cfgModel').value || '').trim();
+    const timeoutSec = parseInt(document.getElementById('cfgTimeout').value, 10) || 30;
+    CLEANUP_API.url = url;
+    CLEANUP_API.key = key;
+    CLEANUP_API.model = model;
+    CLEANUP_API.timeoutMs = Math.max(5, Math.min(120, timeoutSec)) * 1000;
+    try { localStorage.setItem(API_STORAGE_KEY, JSON.stringify(CLEANUP_API)); } catch (e) { }
+    updateApiBadge();
+    showToast('API \u914d\u7f6e\u5df2\u4fdd\u5b58\uff01');
+}
+
+function clearApiConfig() {
+    CLEANUP_API = { url: '', key: '', model: '', timeoutMs: 30000 };
+    try { localStorage.removeItem(API_STORAGE_KEY); } catch (e) { }
+    ['cfgApiUrl', 'cfgApiKey', 'cfgModel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const tEl = document.getElementById('cfgTimeout'); if (tEl) tEl.value = '30';
+    updateApiBadge();
+    showToast('API \u914d\u7f6e\u5df2\u6e05\u7a7a\uff0c\u56de\u9000\u624b\u5de5\u6a21\u5f0f\u3002', '#f59e0b');
+}
+
+function toggleKeyVisibility() {
+    const keyEl = document.getElementById('cfgApiKey');
+    const btn = document.getElementById('toggleKeyBtn');
+    if (!keyEl) return;
+    if (keyEl.type === 'password') { keyEl.type = 'text'; btn.textContent = '\ud83d\ude48'; }
+    else { keyEl.type = 'password'; btn.textContent = '\ud83d\udc41\ufe0f'; }
+}
+
+async function testApiConnection() {
+    const resultEl = document.getElementById('apiTestResult');
+    if (!CLEANUP_API.url || !CLEANUP_API.key) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">\u274c \u8bf7\u5148\u586b\u5199 URL \u548c Key \u5e76\u4fdd\u5b58\u3002</span>';
+        return;
+    }
+    resultEl.innerHTML = '<span style="color:var(--primary);">\u23f3 \u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5\u2026</span>';
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        const resp = await fetch(CLEANUP_API.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CLEANUP_API.key },
+            body: JSON.stringify({ model: CLEANUP_API.model || 'gpt-4o-mini', messages: [{ role: 'user', content: '\u8bf7\u56de\u590d\u201c\u8fde\u63a5\u6210\u529f\u201d\u56db\u4e2a\u5b57\u3002' }], max_tokens: 20 }),
+            signal: controller.signal
+        });
+        clearTimeout(timer);
+        if (!resp.ok) {
+            const errText = await resp.text().catch(() => '');
+            resultEl.innerHTML = '<span style="color:#ef4444;">\u274c API \u8fd4\u56de\u9519\u8bef (' + resp.status + ')</span>';
+            return;
+        }
+        const data = await resp.json();
+        const reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+        resultEl.innerHTML = '<span style="color:#065f46;">\u2705 \u8fde\u63a5\u6210\u529f\uff01API \u54cd\u5e94\uff1a' + escapeHtml((reply || '').slice(0, 50)) + '</span>';
+    } catch (err) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">\u274c ' + escapeHtml(err.message) + '</span>';
+    }
+}
 
 const CLEANUP_CACHE_PREFIX = 'm2.fixCache.';
 
@@ -829,4 +921,5 @@ async function runViralAnalysis() {
 
 initFlowControls();
 initPersistence();
+loadApiConfig();
 
