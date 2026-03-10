@@ -284,107 +284,144 @@ function initPersistence() {
 // M2-1: One-Click Transcript Cleanup
 // =========================================
 
-// --- API Configuration (persisted in localStorage) ---
-const API_STORAGE_KEY = 'm3.apiConfig';
+// --- Per-Step API Configuration (persisted in localStorage) ---
+const SLOT_LABELS = {
+    viral: '爆款拆解 API（Step 0）',
+    cleanup: '纠错 API（Step 3.1）',
+    storyboard: '分镜 API（Step 3.2）'
+};
 
-let CLEANUP_API = { url: '', key: '', model: '', timeoutMs: 30000 };
+const API_SLOTS = {};  // runtime cache: { viral: {url,key,model,timeoutMs}, ... }
 
-function loadApiConfig() {
-    try {
-        const saved = localStorage.getItem(API_STORAGE_KEY);
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            CLEANUP_API.url = parsed.url || '';
-            CLEANUP_API.key = parsed.key || '';
-            CLEANUP_API.model = parsed.model || '';
-            CLEANUP_API.timeoutMs = parsed.timeoutMs || 30000;
-        }
-    } catch (e) { }
-    const urlEl = document.getElementById('cfgApiUrl');
-    const keyEl = document.getElementById('cfgApiKey');
-    const modelEl = document.getElementById('cfgModel');
-    const timeoutEl = document.getElementById('cfgTimeout');
-    if (urlEl) urlEl.value = CLEANUP_API.url;
-    if (keyEl) keyEl.value = CLEANUP_API.key;
-    if (modelEl) modelEl.value = CLEANUP_API.model;
-    if (timeoutEl) timeoutEl.value = CLEANUP_API.timeoutMs ? CLEANUP_API.timeoutMs / 1000 : 30;
-    updateApiBadge();
+function slotStorageKey(slot) { return 'api.slot.' + slot; }
+
+function getSlotApi(slot) {
+    if (API_SLOTS[slot]) return API_SLOTS[slot];
+    return { url: '', key: '', model: '', timeoutMs: 30000 };
 }
 
-function updateApiBadge() {
-    const badge = document.getElementById('apiConfigBadge');
+// Backward compat: existing consumers still reference CLEANUP_API
+// We make it a dynamic getter pointing to 'cleanup' slot by default
+let CLEANUP_API = { url: '', key: '', model: '', timeoutMs: 30000 };
+function syncCleanupApi() {
+    const c = getSlotApi('cleanup');
+    CLEANUP_API.url = c.url; CLEANUP_API.key = c.key;
+    CLEANUP_API.model = c.model; CLEANUP_API.timeoutMs = c.timeoutMs;
+}
+
+function loadSlotConfig(slot) {
+    try {
+        const saved = localStorage.getItem(slotStorageKey(slot));
+        if (saved) { API_SLOTS[slot] = JSON.parse(saved); }
+    } catch (e) { }
+}
+
+function saveSlotConfig(slot) {
+    const prefix = 'cfg_' + slot + '_';
+    const url = (document.getElementById(prefix + 'url').value || '').trim();
+    const key = (document.getElementById(prefix + 'key').value || '').trim();
+    const model = (document.getElementById(prefix + 'model').value || '').trim();
+    const ts = parseInt(document.getElementById(prefix + 'timeout').value, 10) || 30;
+    API_SLOTS[slot] = { url: url, key: key, model: model, timeoutMs: Math.max(5, Math.min(120, ts)) * 1000 };
+    try { localStorage.setItem(slotStorageKey(slot), JSON.stringify(API_SLOTS[slot])); } catch (e) { }
+    syncCleanupApi();
+    updateSlotBadge(slot);
+    showToast(SLOT_LABELS[slot] + ' 配置已保存！');
+}
+
+function clearSlotConfig(slot) {
+    API_SLOTS[slot] = { url: '', key: '', model: '', timeoutMs: 30000 };
+    try { localStorage.removeItem(slotStorageKey(slot)); } catch (e) { }
+    const prefix = 'cfg_' + slot + '_';
+    ['url', 'key', 'model'].forEach(f => { const el = document.getElementById(prefix + f); if (el) el.value = ''; });
+    const tEl = document.getElementById(prefix + 'timeout'); if (tEl) tEl.value = '30';
+    syncCleanupApi();
+    updateSlotBadge(slot);
+    showToast(SLOT_LABELS[slot] + ' 配置已清空。', '#f59e0b');
+}
+
+function toggleSlotKeyVis(slot) {
+    const el = document.getElementById('cfg_' + slot + '_key');
+    const btn = document.getElementById('cfg_' + slot + '_toggleKey');
+    if (!el) return;
+    if (el.type === 'password') { el.type = 'text'; btn.textContent = '\ud83d\ude48'; }
+    else { el.type = 'password'; btn.textContent = '\ud83d\udc41\ufe0f'; }
+}
+
+function updateSlotBadge(slot) {
+    const badge = document.getElementById('cfg_' + slot + '_badge');
     if (!badge) return;
-    if (CLEANUP_API.url && CLEANUP_API.key) {
+    const cfg = getSlotApi(slot);
+    if (cfg.url && cfg.key) {
         badge.textContent = '\u2705 \u5df2\u914d\u7f6e';
-        badge.style.background = '#d1fae5';
-        badge.style.color = '#065f46';
+        badge.style.background = '#d1fae5'; badge.style.color = '#065f46';
     } else {
         badge.textContent = '\u672a\u914d\u7f6e';
-        badge.style.background = '#fef3c7';
-        badge.style.color = '#92400e';
+        badge.style.background = '#fef3c7'; badge.style.color = '#92400e';
     }
 }
 
-function saveApiConfig() {
-    const url = (document.getElementById('cfgApiUrl').value || '').trim();
-    const key = (document.getElementById('cfgApiKey').value || '').trim();
-    const model = (document.getElementById('cfgModel').value || '').trim();
-    const timeoutSec = parseInt(document.getElementById('cfgTimeout').value, 10) || 30;
-    CLEANUP_API.url = url;
-    CLEANUP_API.key = key;
-    CLEANUP_API.model = model;
-    CLEANUP_API.timeoutMs = Math.max(5, Math.min(120, timeoutSec)) * 1000;
-    try { localStorage.setItem(API_STORAGE_KEY, JSON.stringify(CLEANUP_API)); } catch (e) { }
-    updateApiBadge();
-    showToast('API \u914d\u7f6e\u5df2\u4fdd\u5b58\uff01');
-}
-
-function clearApiConfig() {
-    CLEANUP_API = { url: '', key: '', model: '', timeoutMs: 30000 };
-    try { localStorage.removeItem(API_STORAGE_KEY); } catch (e) { }
-    ['cfgApiUrl', 'cfgApiKey', 'cfgModel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-    const tEl = document.getElementById('cfgTimeout'); if (tEl) tEl.value = '30';
-    updateApiBadge();
-    showToast('API \u914d\u7f6e\u5df2\u6e05\u7a7a\uff0c\u56de\u9000\u624b\u5de5\u6a21\u5f0f\u3002', '#f59e0b');
-}
-
-function toggleKeyVisibility() {
-    const keyEl = document.getElementById('cfgApiKey');
-    const btn = document.getElementById('toggleKeyBtn');
-    if (!keyEl) return;
-    if (keyEl.type === 'password') { keyEl.type = 'text'; btn.textContent = '\ud83d\ude48'; }
-    else { keyEl.type = 'password'; btn.textContent = '\ud83d\udc41\ufe0f'; }
-}
-
-async function testApiConnection() {
-    const resultEl = document.getElementById('apiTestResult');
-    if (!CLEANUP_API.url || !CLEANUP_API.key) {
-        resultEl.innerHTML = '<span style="color:#ef4444;">\u274c \u8bf7\u5148\u586b\u5199 URL \u548c Key \u5e76\u4fdd\u5b58\u3002</span>';
+async function testSlotConnection(slot) {
+    const cfg = getSlotApi(slot);
+    const resultEl = document.getElementById('cfg_' + slot + '_result');
+    if (!cfg.url || !cfg.key) {
+        resultEl.innerHTML = '<span style="color:#ef4444;">\u274c \u8bf7\u5148\u586b\u5199\u5e76\u4fdd\u5b58</span>';
         return;
     }
-    resultEl.innerHTML = '<span style="color:var(--primary);">\u23f3 \u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5\u2026</span>';
+    resultEl.innerHTML = '<span style="color:var(--primary);">\u23f3 \u6d4b\u8bd5\u4e2d\u2026</span>';
     try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15000);
-        const resp = await fetch(CLEANUP_API.url, {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        const resp = await fetch(cfg.url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CLEANUP_API.key },
-            body: JSON.stringify({ model: CLEANUP_API.model || 'gpt-4o-mini', messages: [{ role: 'user', content: '\u8bf7\u56de\u590d\u201c\u8fde\u63a5\u6210\u529f\u201d\u56db\u4e2a\u5b57\u3002' }], max_tokens: 20 }),
-            signal: controller.signal
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
+            body: JSON.stringify({ model: cfg.model || 'gpt-4o-mini', messages: [{ role: 'user', content: '\u8bf7\u56de\u590d\u201c\u8fde\u63a5\u6210\u529f\u201d' }], max_tokens: 20 }),
+            signal: ctrl.signal
         });
         clearTimeout(timer);
-        if (!resp.ok) {
-            const errText = await resp.text().catch(() => '');
-            resultEl.innerHTML = '<span style="color:#ef4444;">\u274c API \u8fd4\u56de\u9519\u8bef (' + resp.status + ')</span>';
-            return;
-        }
+        if (!resp.ok) { resultEl.innerHTML = '<span style="color:#ef4444;">\u274c \u9519\u8bef ' + resp.status + '</span>'; return; }
         const data = await resp.json();
         const reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-        resultEl.innerHTML = '<span style="color:#065f46;">\u2705 \u8fde\u63a5\u6210\u529f\uff01API \u54cd\u5e94\uff1a' + escapeHtml((reply || '').slice(0, 50)) + '</span>';
+        resultEl.innerHTML = '<span style="color:#065f46;">\u2705 ' + escapeHtml((reply || '').slice(0, 50)) + '</span>';
     } catch (err) {
         resultEl.innerHTML = '<span style="color:#ef4444;">\u274c ' + escapeHtml(err.message) + '</span>';
     }
 }
+
+function initStepApiConfigs() {
+    document.querySelectorAll('.step-api-cfg').forEach(container => {
+        const slot = container.getAttribute('data-slot');
+        if (!slot || !SLOT_LABELS[slot]) return;
+        loadSlotConfig(slot);
+        const cfg = getSlotApi(slot);
+        const p = 'cfg_' + slot + '_';
+        container.innerHTML =
+            '<details class="step-api-details" style="margin-bottom:12px;">' +
+            '<summary style="cursor:pointer; font-size:0.9rem; font-weight:500; color:var(--text-muted); list-style:none; display:flex; align-items:center; gap:6px;">' +
+            '\u2699\ufe0f ' + SLOT_LABELS[slot] +
+            ' <span id="' + p + 'badge" style="font-size:0.75rem; padding:1px 6px; border-radius:8px; background:#fef3c7; color:#92400e;">\u672a\u914d\u7f6e</span>' +
+            '</summary>' +
+            '<div class="api-fields-grid" style="margin-top:10px;">' +
+            '<label>URL <input type="text" id="' + p + 'url" value="' + escapeHtml(cfg.url) + '" placeholder="https://api.openai.com/v1/chat/completions"></label>' +
+            '<label>Key <div style="position:relative;"><input type="password" id="' + p + 'key" value="' + escapeHtml(cfg.key) + '" placeholder="sk-...">' +
+            '<button type="button" id="' + p + 'toggleKey" onclick="toggleSlotKeyVis(\'' + slot + '\')" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:0.9rem;padding:0;">\ud83d\udc41\ufe0f</button></div></label>' +
+            '<label>Model <input type="text" id="' + p + 'model" value="' + escapeHtml(cfg.model) + '" placeholder="gpt-4o-mini"></label>' +
+            '<label>\u8d85\u65f6(\u79d2) <input type="number" id="' + p + 'timeout" value="' + (cfg.timeoutMs ? cfg.timeoutMs / 1000 : 30) + '" min="5" max="120" style="width:70px;"></label>' +
+            '</div>' +
+            '<div style="display:flex; gap:8px; margin-top:10px; align-items:center;">' +
+            '<button onclick="saveSlotConfig(\'' + slot + '\')" style="padding:4px 10px; font-size:0.8rem;">\ud83d\udcbe \u4fdd\u5b58</button>' +
+            '<button class="outline" onclick="testSlotConnection(\'' + slot + '\')" style="padding:4px 10px; font-size:0.8rem;">\ud83d\udd17 \u6d4b\u8bd5</button>' +
+            '<button class="outline" onclick="clearSlotConfig(\'' + slot + '\')" style="padding:4px 10px; font-size:0.8rem; border-color:#ef4444; color:#ef4444;">\ud83d\uddd1\ufe0f \u6e05\u7a7a</button>' +
+            '<span id="' + p + 'result" style="font-size:0.8rem;"></span>' +
+            '</div>' +
+            '</details>';
+        updateSlotBadge(slot);
+    });
+    syncCleanupApi();
+}
+
+// Replaced old loadApiConfig — now called below
+function loadApiConfig() { initStepApiConfigs(); }
 
 const CLEANUP_CACHE_PREFIX = 'm2.fixCache.';
 
@@ -625,19 +662,20 @@ function setSbStatus(message, type) {
 }
 
 async function callStoryboardAPI(inputText) {
+    const sbApi = getSlotApi('storyboard');
     const controller = new AbortController();
-    const timeoutMs = CLEANUP_API.timeoutMs ? CLEANUP_API.timeoutMs * 2 : 60000;
+    const timeoutMs = sbApi.timeoutMs ? sbApi.timeoutMs * 2 : 60000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await fetch(CLEANUP_API.url, {
+        const response = await fetch(sbApi.url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + CLEANUP_API.key
+                'Authorization': 'Bearer ' + sbApi.key
             },
             body: JSON.stringify({
-                model: CLEANUP_API.model || 'gpt-4o-mini',
+                model: sbApi.model || 'gpt-4o-mini',
                 messages: [
                     { role: 'system', content: getSbSystemPrompt() },
                     { role: 'user', content: inputText }
@@ -695,7 +733,8 @@ async function runStoryboardSplit() {
     }
 
     // Check API
-    if (!CLEANUP_API.url || !CLEANUP_API.key) {
+    const sbApi = getSlotApi('storyboard');
+    if (!sbApi.url || !sbApi.key) {
         setSbStatus('⚠️ 未配置 API，使用手工模式', 'warn');
         showToast('未配置 API，请展开下方手工模式，复制 Prompt 发给大模型。', '#f59e0b');
         if (manualDetails) manualDetails.open = true;
@@ -818,7 +857,8 @@ async function runViralAnalysis() {
     }
 
     // API Check
-    if (!CLEANUP_API.url || !CLEANUP_API.key) {
+    const viralApi = getSlotApi('viral');
+    if (!viralApi.url || !viralApi.key) {
         setViralStatus('⚠️ 未配置 API，使用手工模式', 'warn');
         showToast('未配置 API，请展开下方手工模式自行发给大模型。', '#f59e0b');
         if (manualDetails) manualDetails.open = true;
@@ -848,15 +888,15 @@ async function runViralAnalysis() {
 
     const callApi = async () => {
         const controller = new AbortController();
-        const timeoutMs = 60000;
+        const timeoutMs = viralApi.timeoutMs || 60000;
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const resp = await fetch(CLEANUP_API.url, {
+            const resp = await fetch(viralApi.url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CLEANUP_API.key },
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + viralApi.key },
                 body: JSON.stringify({
-                    model: CLEANUP_API.model || 'gpt-4o-mini',
+                    model: viralApi.model || 'gpt-4o-mini',
                     messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userContent }],
                     temperature: 0.6
                 }),

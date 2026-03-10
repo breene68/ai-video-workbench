@@ -40,45 +40,6 @@
                 style="font-size: 0.85rem; color: var(--text-muted); margin-left: 10px;">(切换赛道后，对应步骤的AI提示词会自动变更)</span>
         </div>
 
-        <!-- Global API Configuration Panel -->
-        <div class="api-config-bar" id="apiConfigPanel">
-            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                <span style="font-weight:600; font-size:0.95rem;">⚙️ API 配置</span>
-                <span id="apiConfigBadge"
-                    style="font-size:0.8rem; padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e;">未配置</span>
-                <label
-                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">URL
-                    <input type="text" id="cfgApiUrl" placeholder="https://api.openai.com/v1/chat/completions"
-                        style="width:280px; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
-                </label>
-                <label
-                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">Key
-                    <div style="position:relative; display:inline-block;">
-                        <input type="password" id="cfgApiKey" placeholder="sk-..."
-                            style="width:180px; padding:5px 28px 5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
-                        <button type="button" onclick="toggleKeyVisibility()" id="toggleKeyBtn"
-                            style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:0.9rem;padding:0;">👁️</button>
-                    </div>
-                </label>
-                <label
-                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">Model
-                    <input type="text" id="cfgModel" placeholder="gpt-4o-mini"
-                        style="width:120px; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
-                </label>
-                <label
-                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">超时(秒)
-                    <input type="number" id="cfgTimeout" placeholder="30" min="5" max="120"
-                        style="width:60px; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
-                </label>
-                <button onclick="saveApiConfig()" style="padding:5px 12px; font-size:0.85rem;">💾 保存</button>
-                <button class="outline" onclick="testApiConnection()" style="padding:5px 12px; font-size:0.85rem;">🔗
-                    测试</button>
-                <button class="outline" onclick="clearApiConfig()"
-                    style="padding:5px 12px; font-size:0.85rem; border-color:#ef4444; color:#ef4444;">🗑️ 清空</button>
-                <span id="apiTestResult" style="font-size:0.85rem;"></span>
-            </div>
-        </div>
-
         <div class="flow-bar">
             <button class="outline" id="prevStepBtn">⬅️ 上一步</button>
             <span id="currentStepLabel">当前步骤：第1步</span>
@@ -114,6 +75,7 @@
 
                 <div class="card">
                     <h3>🛠️ 0.2 执行提取与重组</h3>
+                    <div class="step-api-cfg" data-slot="viral"></div>
                     <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
                         <button id="analyzeBtn" onclick="runViralAnalysis()">🚀 一键拆解重组</button>
                         <span id="analyzeStatus" class="fix-status"></span>
@@ -225,6 +187,7 @@
 
                 <div class="card" style="border-left: 4px solid #10b981; background: #f0fdf4;">
                     <h3 style="border-bottom-color: #d1fae5;">✨ 3.1 一键纠正错别字 (必做)</h3>
+                    <div class="step-api-cfg" data-slot="cleanup"></div>
                     <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">
                         粘贴"音视频转文字工具"导出的原始文本，点击按钮即可一键纠错。未配 API 时自动切换手工模式。</p>
 
@@ -266,6 +229,7 @@
                         <span id="sb-hint"
                             style="font-size: 0.8rem; font-weight: normal; color: #f59e0b; margin-left: 10px; display: none;">该赛道Prompt待优化，当前为通用版</span>
                     </h3>
+                    <div class="step-api-cfg" data-slot="storyboard"></div>
                     <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">
                         自动使用上方纠错结果作为输入（若为空则回退到原始文本）。点击按钮即可生成 10-15 段分镜表。
                     </p>
