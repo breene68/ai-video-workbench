@@ -40,6 +40,45 @@
                 style="font-size: 0.85rem; color: var(--text-muted); margin-left: 10px;">(切换赛道后，对应步骤的AI提示词会自动变更)</span>
         </div>
 
+        <!-- Global API Configuration Panel -->
+        <div class="api-config-bar" id="apiConfigPanel">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <span style="font-weight:600; font-size:0.95rem;">⚙️ API 配置</span>
+                <span id="apiConfigBadge"
+                    style="font-size:0.8rem; padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e;">未配置</span>
+                <label
+                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">URL
+                    <input type="text" id="cfgApiUrl" placeholder="https://api.openai.com/v1/chat/completions"
+                        style="width:280px; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
+                </label>
+                <label
+                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">Key
+                    <div style="position:relative; display:inline-block;">
+                        <input type="password" id="cfgApiKey" placeholder="sk-..."
+                            style="width:180px; padding:5px 28px 5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
+                        <button type="button" onclick="toggleKeyVisibility()" id="toggleKeyBtn"
+                            style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:0.9rem;padding:0;">👁️</button>
+                    </div>
+                </label>
+                <label
+                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">Model
+                    <input type="text" id="cfgModel" placeholder="gpt-4o-mini"
+                        style="width:120px; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
+                </label>
+                <label
+                    style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:var(--text-muted);">超时(秒)
+                    <input type="number" id="cfgTimeout" placeholder="30" min="5" max="120"
+                        style="width:60px; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.85rem;">
+                </label>
+                <button onclick="saveApiConfig()" style="padding:5px 12px; font-size:0.85rem;">💾 保存</button>
+                <button class="outline" onclick="testApiConnection()" style="padding:5px 12px; font-size:0.85rem;">🔗
+                    测试</button>
+                <button class="outline" onclick="clearApiConfig()"
+                    style="padding:5px 12px; font-size:0.85rem; border-color:#ef4444; color:#ef4444;">🗑️ 清空</button>
+                <span id="apiTestResult" style="font-size:0.85rem;"></span>
+            </div>
+        </div>
+
         <div class="flow-bar">
             <button class="outline" id="prevStepBtn">⬅️ 上一步</button>
             <span id="currentStepLabel">当前步骤：第1步</span>
@@ -183,45 +222,6 @@
                 <h2>第三步：AI 智能纠错 & 提取生图分镜</h2>
                 <p class="subtitle">语音识别难免有错别字，请先让大模型帮你“清洗”一遍文字，然后再切片出图。</p>
 
-                <!-- API Configuration Panel -->
-                <details class="card api-config-card" id="apiConfigPanel">
-                    <summary
-                        style="cursor:pointer; font-weight:600; font-size:1.05rem; list-style:none; display:flex; align-items:center; gap:8px;">
-                        ⚙️ API 配置（点击展开）
-                        <span id="apiConfigBadge"
-                            style="font-size:0.8rem; font-weight:normal; padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e;">未配置</span>
-                    </summary>
-                    <div style="margin-top:15px;">
-                        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">配置后，一键纠错 / 一键分镜 /
-                            一键拆解 均复用此 API。未配置时自动回退手工模式。</p>
-                        <div class="api-fields-grid">
-                            <label>API URL
-                                <input type="text" id="cfgApiUrl"
-                                    placeholder="https://api.openai.com/v1/chat/completions">
-                            </label>
-                            <label>API Key
-                                <div style="position:relative;">
-                                    <input type="password" id="cfgApiKey" placeholder="sk-...">
-                                    <button type="button" onclick="toggleKeyVisibility()" id="toggleKeyBtn"
-                                        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1.1rem;padding:2px 4px;">👁️</button>
-                                </div>
-                            </label>
-                            <label>Model
-                                <input type="text" id="cfgModel" placeholder="gpt-4o-mini">
-                            </label>
-                            <label>Timeout (秒)
-                                <input type="number" id="cfgTimeout" placeholder="30" min="5" max="120">
-                            </label>
-                        </div>
-                        <div style="display:flex; gap:10px; margin-top:15px;">
-                            <button onclick="saveApiConfig()">💾 保存配置</button>
-                            <button class="outline" onclick="testApiConnection()">🔗 测试连接</button>
-                            <button class="outline" onclick="clearApiConfig()"
-                                style="border-color:#ef4444; color:#ef4444;">🗑️ 清空配置</button>
-                        </div>
-                        <div id="apiTestResult" style="margin-top:10px; font-size:0.9rem;"></div>
-                    </div>
-                </details>
 
                 <div class="card" style="border-left: 4px solid #10b981; background: #f0fdf4;">
                     <h3 style="border-bottom-color: #d1fae5;">✨ 3.1 一键纠正错别字 (必做)</h3>

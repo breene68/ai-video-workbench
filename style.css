@@ -162,9 +162,13 @@ p.subtitle {
     background: #fff;
 }
 
-/* API Config Panel */
-.api-config-card summary::-webkit-details-marker {
-    display: none;
+/* API Config Bar (global header) */
+.api-config-bar {
+    padding: 10px 30px;
+    background: #f0f4ff;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
 }
 
 .api-fields-grid {
