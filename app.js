@@ -79,6 +79,7 @@ function updatePrompts(silent = false) {
     document.getElementById('suffix-title').innerText = data.suffixTitle;
     document.getElementById('prompt2').innerText = data.suffix;
 
+    if (typeof initStep2ManualPrompts === 'function') initStep2ManualPrompts();
     localStorage.setItem(STORAGE_KEYS.category, category);
     if (!silent) {
         showToast('已切换至【' + data.title + '】专属提示词！', '#3b82f6');
@@ -977,7 +978,7 @@ async function runViralAnalysis() {
 
 function sanitizeThreshold(val) {
     const n = parseInt(val, 10);
-    if (isNaN(n)) return 75;
+    if (isNaN(n)) return 80;
     return Math.max(0, Math.min(100, n));
 }
 
@@ -1020,7 +1021,7 @@ function ensureStep2StateSchema(state) {
         modified = true;
     }
     if (!state.qaConfig) {
-        state.qaConfig = { threshold: 75 };
+        state.qaConfig = { threshold: 80 };
         modified = true;
     }
 
@@ -1059,6 +1060,10 @@ function ensureStep2StateSchema(state) {
     }
     if (typeof state.output.nblmSourceHash !== 'string') {
         state.output.nblmSourceHash = state.pipeline.nblmSourceHash || '';
+        modified = true;
+    }
+    if (typeof state.output.qaGateLevel !== 'string') {
+        state.output.qaGateLevel = 'red';
         modified = true;
     }
     if (typeof state.output.forceContinueToken !== 'string') {
@@ -1104,6 +1109,7 @@ function createDefaultStep2State() {
             expanded: '',
             qa: '',
             nblm: '',
+            qaGateLevel: 'red',
             qaSourceHash: '',
             nblmSourceHash: '',
             qaReportId: '',
@@ -1113,7 +1119,7 @@ function createDefaultStep2State() {
             forceContinueTokenQaReportId: ''
         },
         qaConfig: {
-            threshold: 75
+            threshold: 80
         },
         apiSlots: {
             step2: { url: '', key: '', model: '', timeoutMs: 30000 }
@@ -1234,36 +1240,34 @@ function renderStep2GateFromState(state) {
     if (!gate) return;
 
     const status = state.pipeline.status;
-    const threshold = sanitizeThreshold(state.qaConfig.threshold);
-    let score = 0;
-    if (state.output.qa) {
-        const scoreMatch = state.output.qa.match(/总分[^\d]*(\d+)/);
-        if (scoreMatch && scoreMatch[1]) {
-            score = parseInt(scoreMatch[1], 10) || 0;
-        }
-    }
+    const level = state.output.qaGateLevel || 'red';
+    const score = parseQAScoreStrictFallback(state.output.qa);
 
-    if (status === 'qa_blocked') {
+    if (status === 'qa_blocked' || level === 'red') {
         gate.style.display = 'block';
         gate.style.background = '#fef2f2';
         gate.style.color = '#991b1b';
         const token = state.output.forceContinueToken;
         const canForce = !!token && !state.output.forceContinueTokenUsed;
         const scoreText = score > 0 ? String(score) : '解析失败';
-        gate.innerHTML = '❌ <b>质量门禁未通过</b> (得分: ' + scoreText + ' &lt; 阈值 ' + threshold + ')。请根据建议修改扩写稿后重跑质检。' +
+        gate.innerHTML = '❌ <b>质量门禁拦截 (极差)</b> 得分: ' + scoreText + '。扩写稿质量堪忧，必须依据建议大幅修改后重跑，或强制跳过。' +
             (canForce ? ' <button class="outline" style="margin-left:8px;" onclick="window.forceContinueOnce(\'' + token + '\')">⚠️ 强制继续一次</button>' : '');
         return;
     }
 
-    if (['qa_passed', 'nblm_generating', 'done'].includes(status)) {
+    if (level === 'yellow') {
+        gate.style.display = 'block';
+        gate.style.background = '#fffbeb';
+        gate.style.color = '#92400e';
+        gate.innerHTML = '⚠️ <b>质量门禁预警 (一般)</b> 得分: ' + score + '。扩写稿基本达标，建议手动微调后继续。';
+        return;
+    }
+
+    if (level === 'green') {
         gate.style.display = 'block';
         gate.style.background = '#d1fae5';
         gate.style.color = '#065f46';
-        if (score >= threshold) {
-            gate.innerHTML = '✅ <b>质量门禁通过</b> (得分: ' + score + ' >= 阈值 ' + threshold + ')。允许进入下一步。';
-        } else {
-            gate.innerHTML = '✅ <b>质量门禁已放行</b> (本次为手动放行或无有效分数)。允许进入下一步。';
-        }
+        gate.innerHTML = '✅ <b>质量门禁通过 (优秀)</b> 得分: ' + score + '。扩写稿非常出色，请放心继续！';
         return;
     }
 
@@ -1504,7 +1508,13 @@ async function doExpand(api, runId) {
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
             body: JSON.stringify({
                 model: api.model || 'gpt-4o-mini',
-                messages: [{ role: 'system', content: '请将以下文案扩写为800-1200字，适合中老年播客朗读，口语化、接地气、情绪饱满：' }, { role: 'user', content: input }],
+                messages: [
+                    { 
+                        role: 'system', 
+                        content: (typeof getStep2ExpandPrompt === 'function') ? getStep2ExpandPrompt(input) : '请将以下文案扩写为800-1200字，适合中老年播客朗读，口语化、接地气、情绪饱满：' 
+                    }, 
+                    { role: 'user', content: input }
+                ],
                 temperature: 0.7
             }),
             signal: controller.signal
@@ -1539,6 +1549,21 @@ async function doExpand(api, runId) {
     }
 }
 
+function parseQAScoreStrictFallback(text) {
+    if (!text) return 0;
+    // Strict: "总分：X/100" or "总分:X"
+    const strictMatch = text.match(/总分[:：]\s*(\d{1,3})\s*\/\s*100/);
+    if (strictMatch && strictMatch[1]) {
+        return Math.max(0, Math.min(100, parseInt(strictMatch[1], 10)));
+    }
+    // Fallback: any number that looks like a score
+    const fallbackMatch = text.match(/总分[^\d]*(\d{1,3})/);
+    if (fallbackMatch && fallbackMatch[1]) {
+        return Math.max(0, Math.min(100, parseInt(fallbackMatch[1], 10)));
+    }
+    return 0;
+}
+
 async function doQA(api, runId) {
     if (!runId) {
         runId = startStep2Run('qa_checking', 'qa');
@@ -1567,7 +1592,13 @@ async function doQA(api, runId) {
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
             body: JSON.stringify({
                 model: api.model || 'gpt-4o-mini',
-                messages: [{ role: 'system', content: '请对以下播客文案进行质量打分(满分100)，必须包含“总分：X/100”的字样，并给出修改建议：' }, { role: 'user', content: input }],
+                messages: [
+                    { 
+                        role: 'system', 
+                        content: (typeof getStep2QaPrompt === 'function') ? getStep2QaPrompt(input) : '请对以下播客文案进行质量打分(满分100)，必须包含“总分：X/100”的字样，并给出修改建议：' 
+                    }, 
+                    { role: 'user', content: input }
+                ],
                 temperature: 0.3
             }),
             signal: controller.signal
@@ -1584,12 +1615,7 @@ async function doQA(api, runId) {
         const qaReportId = generateQaReportId(runId, text);
         const threshold = sanitizeThreshold(document.getElementById('qaThreshold').value);
 
-        // Parse "总分：X/100" or similar
-        let score = 0;
-        const scoreMatch = text.match(/总分[^\d]*(\d+)/);
-        if (scoreMatch && scoreMatch[1]) {
-            score = parseInt(scoreMatch[1], 10) || 0;
-        }
+        const score = parseQAScoreStrictFallback(text);
 
         state.output.qa = text;
         state.output.qaReportId = qaReportId;
@@ -1599,8 +1625,9 @@ async function doQA(api, runId) {
         state.pipeline.currentStage = 'qa';
         state.pipeline.error = '';
 
-        if (score >= threshold) {
+        if (score >= 80) {
             state.pipeline.status = 'qa_passed';
+            state.output.qaGateLevel = 'green';
             state.output.forceContinueToken = '';
             state.output.forceContinueTokenUsed = false;
             state.output.forceContinueTokenRunId = '';
@@ -1609,7 +1636,22 @@ async function doQA(api, runId) {
 
             qaResultEl.innerText = text;
             qaResultEl.style.display = 'block';
-            document.getElementById('qaStatus').innerHTML = '<span style="color:#10b981;">质检完成！</span>';
+            document.getElementById('qaStatus').innerHTML = '<span style="color:#10b981;">质检完成 (优)！</span>';
+            renderStep2GateFromState(state);
+            updatePipeUI('qa', 'success', Date.now() - startTime);
+            return true;
+        } else if (score >= 70) {
+            state.pipeline.status = 'qa_passed';
+            state.output.qaGateLevel = 'yellow';
+            state.output.forceContinueToken = '';
+            state.output.forceContinueTokenUsed = false;
+            state.output.forceContinueTokenRunId = '';
+            state.output.forceContinueTokenQaReportId = '';
+            saveStep2State(state);
+
+            qaResultEl.innerText = text;
+            qaResultEl.style.display = 'block';
+            document.getElementById('qaStatus').innerHTML = '<span style="color:#f59e0b;">质检完成 (良)！</span>';
             renderStep2GateFromState(state);
             updatePipeUI('qa', 'success', Date.now() - startTime);
             return true;
@@ -1617,6 +1659,7 @@ async function doQA(api, runId) {
 
         const token = generateStep2Token();
         state.pipeline.status = 'qa_blocked';
+        state.output.qaGateLevel = 'red';
         state.output.forceContinueToken = token;
         state.output.forceContinueTokenUsed = false;
         state.output.forceContinueTokenRunId = runId;
@@ -1626,7 +1669,7 @@ async function doQA(api, runId) {
         qaResultEl.innerText = text;
         qaResultEl.style.display = 'block';
 
-        document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检未达标！</span>';
+        document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检未达标 (差)！</span>';
         renderStep2GateFromState(state);
         updatePipeUI('qa', 'error', Date.now() - startTime);
         return false;
@@ -1715,7 +1758,21 @@ window.forceContinueOnce = async function (token) {
     return await doNBLM(runId, { forceContinueToken: token });
 };
 
+// --- Manual Prompts Initialization ---
+function initStep2ManualPrompts() {
+    const expandBox = document.getElementById('expandManualPrompt');
+    const qaBox = document.getElementById('qaManualPrompt');
+
+    if (expandBox && typeof STEP2_EXPAND_TEMPLATE !== 'undefined') {
+        expandBox.innerText = STEP2_EXPAND_TEMPLATE;
+    }
+    if (qaBox && typeof STEP2_QA_TEMPLATE !== 'undefined') {
+        qaBox.innerText = STEP2_QA_TEMPLATE;
+    }
+}
+
 initFlowControls();
 initPersistence();
 loadStep2State();
 loadApiConfig();
+initStep2ManualPrompts();
