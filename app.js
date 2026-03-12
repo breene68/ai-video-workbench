@@ -2,7 +2,10 @@ const STORAGE_KEYS = {
     category: 'm1.currentCategory',
     step: 'm1.currentStep',
     draftText: 'm1.rawText',
-    checklist: 'm1.checklistState'
+    checklist: 'm1.checklistState',
+    step2StateV1: 'm2.step2.state.v1',
+    step2BackupV1: 'm2.step2.backup.v1',
+    step2Legacy: 'm2.step2.state'
 };
 
 // Tab switching logic
@@ -43,8 +46,8 @@ function updatePrompts(silent = false) {
     // Update NotebookLM step
     document.getElementById('nblm-title').innerText = data.title;
     const pNblm = document.getElementById('p-nlprompt');
-    const qaGate = document.getElementById('qaGate');
-    const passedQA = qaGate && qaGate.style.display !== 'none' && qaGate.innerHTML.includes('通过');
+    const step2State = (typeof loadStep2State === 'function') ? loadStep2State(false) : null;
+    const passedQA = step2State ? isStep2QaPassedStatus(step2State.pipeline.status) : false;
     if (pNblm && passedQA) {
         pNblm.innerText = (typeof getNblmPrompt === 'function') ? getNblmPrompt(category) : data.nblm;
         if (typeof saveStep2State === 'function') saveStep2State();
@@ -971,40 +974,440 @@ async function runViralAnalysis() {
 // =========================================
 // Step 2 Pipeline: Expand -> QA -> NBLM
 // =========================================
-const STEP2_CACHE_KEY = 'm2.step2.state';
 
-function saveStep2State() {
-    const state = {
-        expandInput: document.getElementById('expandInput').value,
-        expandOutput: document.getElementById('expandOutput').value,
-        qaThreshold: document.getElementById('qaThreshold').value,
-        qaResult: document.getElementById('qaResult').innerText,
-        nblmPrompt: document.getElementById('p-nlprompt').innerText,
-        lastRunAt: new Date().toISOString()
-    };
-    try { localStorage.setItem(STEP2_CACHE_KEY, JSON.stringify(state)); } catch (e) { }
+function sanitizeThreshold(val) {
+    const n = parseInt(val, 10);
+    if (isNaN(n)) return 75;
+    return Math.max(0, Math.min(100, n));
 }
 
-function loadStep2State() {
-    try {
-        const cached = localStorage.getItem(STEP2_CACHE_KEY);
-        if (cached) {
-            const state = JSON.parse(cached);
-            if (state.expandInput) document.getElementById('expandInput').value = state.expandInput;
-            if (state.expandOutput) document.getElementById('expandOutput').value = state.expandOutput;
-            if (state.qaThreshold) document.getElementById('qaThreshold').value = state.qaThreshold;
-            if (state.qaResult) {
-                document.getElementById('qaResult').innerText = state.qaResult;
-                document.getElementById('qaResult').style.display = 'block';
-                if (state.qaResult.includes('分')) document.getElementById('qaGate').style.display = 'block';
+const STEP2_STATUSES = new Set(['idle', 'expanding', 'qa_checking', 'qa_blocked', 'qa_passed', 'nblm_generating', 'done', 'failed']);
+
+function generateStep2RunId() {
+    return 'run_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+}
+
+function generateStep2Token() {
+    return 'fc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+}
+
+function generateQaReportId(runId, qaText) {
+    return 'qar_' + hashText((runId || '') + '|' + (qaText || '') + '|' + Date.now());
+}
+
+function isStep2QaPassedStatus(status) {
+    return status === 'qa_passed' || status === 'nblm_generating' || status === 'done';
+}
+
+function isStep2RunActive(state, runId) {
+    if (!runId) return true;
+    return state.pipeline.activeRunId === runId;
+}
+
+function ensureStep2StateSchema(state) {
+    let modified = false;
+
+    if (!state.pipeline) {
+        state.pipeline = {};
+        modified = true;
+    }
+    if (!state.output) {
+        state.output = {};
+        modified = true;
+    }
+    if (!state.input) {
+        state.input = { raw: '' };
+        modified = true;
+    }
+    if (!state.qaConfig) {
+        state.qaConfig = { threshold: 75 };
+        modified = true;
+    }
+
+    if (!STEP2_STATUSES.has(state.pipeline.status)) {
+        state.pipeline.status = 'idle';
+        modified = true;
+    }
+    if (typeof state.pipeline.currentStage !== 'string') {
+        state.pipeline.currentStage = 'idle';
+        modified = true;
+    }
+    if (typeof state.pipeline.error !== 'string') {
+        state.pipeline.error = '';
+        modified = true;
+    }
+    if (typeof state.pipeline.activeRunId !== 'string') {
+        state.pipeline.activeRunId = '';
+        modified = true;
+    }
+    if (typeof state.pipeline.runId !== 'string') {
+        state.pipeline.runId = '';
+        modified = true;
+    }
+    if (typeof state.pipeline.qaSourceHash !== 'string') {
+        state.pipeline.qaSourceHash = '';
+        modified = true;
+    }
+    if (typeof state.pipeline.nblmSourceHash !== 'string') {
+        state.pipeline.nblmSourceHash = '';
+        modified = true;
+    }
+
+    if (typeof state.output.qaSourceHash !== 'string') {
+        state.output.qaSourceHash = state.pipeline.qaSourceHash || '';
+        modified = true;
+    }
+    if (typeof state.output.nblmSourceHash !== 'string') {
+        state.output.nblmSourceHash = state.pipeline.nblmSourceHash || '';
+        modified = true;
+    }
+    if (typeof state.output.forceContinueToken !== 'string') {
+        state.output.forceContinueToken = '';
+        modified = true;
+    }
+    if (typeof state.output.forceContinueTokenUsed !== 'boolean') {
+        state.output.forceContinueTokenUsed = false;
+        modified = true;
+    }
+    if (typeof state.output.forceContinueTokenRunId !== 'string') {
+        state.output.forceContinueTokenRunId = '';
+        modified = true;
+    }
+    if (typeof state.output.forceContinueTokenQaReportId !== 'string') {
+        state.output.forceContinueTokenQaReportId = '';
+        modified = true;
+    }
+    if (typeof state.output.qaReportId !== 'string') {
+        state.output.qaReportId = '';
+        modified = true;
+    }
+
+    state.qaConfig.threshold = sanitizeThreshold(state.qaConfig.threshold);
+    return modified;
+}
+
+function createDefaultStep2State() {
+    return {
+        pipeline: {
+            status: 'idle', // idle|expanding|qa_checking|qa_blocked|qa_passed|nblm_generating|done|failed
+            currentStage: null, // expand|qa|nblm|null
+            activeRunId: '',
+            error: '',
+            runId: '', // Legacy support
+            qaSourceHash: '',
+            nblmSourceHash: ''
+        },
+        input: {
+            raw: ''
+        },
+        output: {
+            expanded: '',
+            qa: '',
+            nblm: '',
+            qaSourceHash: '',
+            nblmSourceHash: '',
+            qaReportId: '',
+            forceContinueToken: '',
+            forceContinueTokenUsed: false,
+            forceContinueTokenRunId: '',
+            forceContinueTokenQaReportId: ''
+        },
+        qaConfig: {
+            threshold: 75
+        },
+        apiSlots: {
+            step2: { url: '', key: '', model: '', timeoutMs: 30000 }
+        },
+        updatedAt: Date.now()
+    };
+}
+
+function setStep2PipelineState(runIdOrState, statusOrPatch, currentStage, errorMessage = '') {
+    let state;
+    if (typeof runIdOrState === 'string') {
+        state = loadStep2State(false);
+        if (!isStep2RunActive(state, runIdOrState)) return false;
+        state.pipeline.status = STEP2_STATUSES.has(statusOrPatch) ? statusOrPatch : 'failed';
+        state.pipeline.currentStage = currentStage;
+        state.pipeline.error = errorMessage || '';
+    } else {
+        state = runIdOrState;
+        const patch = statusOrPatch;
+        if (patch.status !== undefined) state.pipeline.status = patch.status;
+        if (patch.currentStage !== undefined) state.pipeline.currentStage = patch.currentStage;
+        if (patch.activeRunId !== undefined) state.pipeline.activeRunId = patch.activeRunId;
+        if (patch.error !== undefined) state.pipeline.error = patch.error;
+    }
+    saveStep2State(state);
+    renderStep2FromState(state);
+    return true;
+}
+
+function startStep2Run(status = 'idle', currentStage = 'idle') {
+    const state = loadStep2State(false);
+    const runId = generateStep2RunId();
+    state.pipeline.runId = runId;
+    state.pipeline.activeRunId = runId;
+    state.pipeline.status = STEP2_STATUSES.has(status) ? status : 'idle';
+    state.pipeline.currentStage = currentStage;
+    state.pipeline.error = '';
+    saveStep2State(state);
+    renderStep2FromState(state);
+    return runId;
+}
+
+function isValidForceContinueToken(state, token, runId) {
+    if (!token) return false;
+    if (state.pipeline.status !== 'qa_blocked') return false;
+    if (state.output.forceContinueTokenUsed) return false;
+    if (state.output.forceContinueToken !== token) return false;
+    if (state.output.forceContinueTokenRunId !== runId) return false;
+    if (state.output.forceContinueTokenQaReportId !== state.output.qaReportId) return false;
+    return true;
+}
+
+function renderStep2FromState(state) {
+    if (!state || !state.pipeline) return;
+
+    // 1. Render Status Labels
+    const stages = ['expand', 'qa', 'nblm'];
+    stages.forEach(stage => {
+        const dot = document.getElementById('pipeDot-' + stage);
+        const timeEl = document.getElementById('pipeTime-' + stage);
+        if (!dot) return;
+
+        let stageStatus = 'idle';
+        const pipelineStatus = state.pipeline.status;
+        const currentStage = state.pipeline.currentStage;
+
+        if (currentStage === stage) {
+            if (['expanding', 'qa_checking', 'nblm_generating'].includes(pipelineStatus)) {
+                stageStatus = 'running';
+            } else if (pipelineStatus === 'failed') {
+                stageStatus = 'failed';
             }
-            if (state.nblmPrompt && state.nblmPrompt !== '(提示词将在此生成)') {
-                document.getElementById('p-nlprompt').innerText = state.nblmPrompt;
-                document.getElementById('p-nlprompt').style.display = 'block';
-                document.getElementById('copyNblmBtn').style.display = 'inline-block';
+        } else {
+            if (stage === 'expand') {
+                if (['qa_checking', 'qa_blocked', 'qa_passed', 'nblm_generating', 'done'].includes(pipelineStatus)) {
+                    stageStatus = 'success';
+                } else if (pipelineStatus === 'failed' && currentStage === 'expand') {
+                    stageStatus = 'failed';
+                }
+            } else if (stage === 'qa') {
+                if (['qa_passed', 'nblm_generating', 'done'].includes(pipelineStatus)) {
+                    stageStatus = 'success';
+                } else if (pipelineStatus === 'qa_blocked') {
+                    stageStatus = 'failed'; 
+                } else if (pipelineStatus === 'failed' && currentStage === 'qa') {
+                    stageStatus = 'failed';
+                }
+            } else if (stage === 'nblm') {
+                if (pipelineStatus === 'done') {
+                    stageStatus = 'success';
+                } else if (pipelineStatus === 'failed' && currentStage === 'nblm') {
+                    stageStatus = 'failed';
+                }
+            }
+        }
+
+        if (stageStatus === 'running') {
+            dot.innerText = '⏳';
+            if (timeEl) timeEl.innerText = '处理中...';
+        } else if (stageStatus === 'success') {
+            dot.innerText = '✅';
+            if (timeEl) timeEl.innerText = '完成';
+        } else if (stageStatus === 'failed') {
+            dot.innerText = '❌';
+            if (timeEl) timeEl.innerText = pipelineStatus === 'qa_blocked' ? '未通过' : '失败';
+        } else {
+            dot.innerText = '⚪';
+            if (timeEl) timeEl.innerText = '等待';
+        }
+    });
+
+    // 2. Render QA Gate
+    renderStep2GateFromState(state);
+}
+
+function renderStep2GateFromState(state) {
+    const gate = document.getElementById('qaGate');
+    if (!gate) return;
+
+    const status = state.pipeline.status;
+    const threshold = sanitizeThreshold(state.qaConfig.threshold);
+    let score = 0;
+    if (state.output.qa) {
+        const scoreMatch = state.output.qa.match(/总分[^\d]*(\d+)/);
+        if (scoreMatch && scoreMatch[1]) {
+            score = parseInt(scoreMatch[1], 10) || 0;
+        }
+    }
+
+    if (status === 'qa_blocked') {
+        gate.style.display = 'block';
+        gate.style.background = '#fef2f2';
+        gate.style.color = '#991b1b';
+        const token = state.output.forceContinueToken;
+        const canForce = !!token && !state.output.forceContinueTokenUsed;
+        const scoreText = score > 0 ? String(score) : '解析失败';
+        gate.innerHTML = '❌ <b>质量门禁未通过</b> (得分: ' + scoreText + ' &lt; 阈值 ' + threshold + ')。请根据建议修改扩写稿后重跑质检。' +
+            (canForce ? ' <button class="outline" style="margin-left:8px;" onclick="window.forceContinueOnce(\'' + token + '\')">⚠️ 强制继续一次</button>' : '');
+        return;
+    }
+
+    if (['qa_passed', 'nblm_generating', 'done'].includes(status)) {
+        gate.style.display = 'block';
+        gate.style.background = '#d1fae5';
+        gate.style.color = '#065f46';
+        if (score >= threshold) {
+            gate.innerHTML = '✅ <b>质量门禁通过</b> (得分: ' + score + ' >= 阈值 ' + threshold + ')。允许进入下一步。';
+        } else {
+            gate.innerHTML = '✅ <b>质量门禁已放行</b> (本次为手动放行或无有效分数)。允许进入下一步。';
+        }
+        return;
+    }
+
+    gate.style.display = 'none';
+}
+
+function migrateLegacyStep2State(state) {
+    let modified = false;
+
+    // 1. Check legacy main state key
+    try {
+        const legacyRaw = localStorage.getItem(STORAGE_KEYS.step2Legacy);
+        if (legacyRaw) {
+            const legacy = JSON.parse(legacyRaw);
+            // Idempotent check: only migrate if new fields are empty and legacy ones exist
+            if (!state.input.raw && legacy.expandInput) { state.input.raw = legacy.expandInput; modified = true; }
+            if (!state.output.expanded && legacy.expandOutput) { state.output.expanded = legacy.expandOutput; modified = true; }
+            if (!state.output.qa && legacy.qaResult) { state.output.qa = legacy.qaResult; modified = true; }
+            if (!state.output.nblm && legacy.nblmPrompt) { state.output.nblm = legacy.nblmPrompt; modified = true; }
+            if (legacy.qaThreshold) {
+                const s = sanitizeThreshold(legacy.qaThreshold);
+                if (state.qaConfig.threshold !== s) {
+                    state.qaConfig.threshold = s;
+                    modified = true;
+                }
+            }
+        }
+    } catch (e) { console.warn('Step2 legacy migration failed', e); }
+
+    // 2. Check legacy API slot
+    try {
+        const legacyApiRaw = localStorage.getItem('api.slot.step2');
+        if (legacyApiRaw) {
+            const legacyApi = JSON.parse(legacyApiRaw);
+            if (!state.apiSlots.step2.url && legacyApi.url) {
+                state.apiSlots.step2 = { ...legacyApi };
+                modified = true;
             }
         }
     } catch (e) { }
+
+    return modified;
+}
+
+function saveStep2State(customState = null) {
+    let state = customState;
+    if (!state) {
+        // Collect from UI for no-arg calls to keep existing logic working
+        state = loadStep2State(false); // Get current state without UI sync
+        state.input.raw = document.getElementById('expandInput').value;
+        state.output.expanded = document.getElementById('expandOutput').value;
+        state.qaConfig.threshold = sanitizeThreshold(document.getElementById('qaThreshold').value);
+        state.output.qa = document.getElementById('qaResult').innerText;
+        state.output.nblm = document.getElementById('p-nlprompt').innerText;
+        
+        // Sync API config from runtime cache
+        const currentApi = getSlotApi('step2');
+        if (currentApi && currentApi.url) {
+            state.apiSlots.step2 = { ...currentApi };
+        }
+    }
+
+    ensureStep2StateSchema(state);
+
+    // Ensure runId exists
+    if (!state.pipeline.runId) {
+        state.pipeline.runId = generateStep2RunId();
+    }
+
+    // Ensure output fingerprints exist
+    if (state.pipeline.qaSourceHash && !state.output.qaSourceHash) state.output.qaSourceHash = state.pipeline.qaSourceHash;
+    if (state.pipeline.nblmSourceHash && !state.output.nblmSourceHash) state.output.nblmSourceHash = state.pipeline.nblmSourceHash;
+
+    state.updatedAt = Date.now();
+
+    try {
+        const serialized = JSON.stringify(state);
+        localStorage.setItem(STORAGE_KEYS.step2StateV1, serialized);
+        localStorage.setItem(STORAGE_KEYS.step2BackupV1, serialized);
+    } catch (e) {
+        console.error('Failed to save Step2 state', e);
+    }
+}
+
+function loadStep2State(syncUI = true) {
+    let state = createDefaultStep2State();
+    let needSave = false;
+
+    try {
+        const raw = localStorage.getItem(STORAGE_KEYS.step2StateV1);
+        if (raw) {
+            state = JSON.parse(raw);
+            if (ensureStep2StateSchema(state)) needSave = true;
+        } else {
+            // First time or missing: try migration
+            if (migrateLegacyStep2State(state)) {
+                needSave = true;
+            }
+            if (ensureStep2StateSchema(state)) needSave = true;
+        }
+    } catch (e) {
+        console.warn('Failed to load Step2 state, using default/backup', e);
+        try {
+            const backup = localStorage.getItem(STORAGE_KEYS.step2BackupV1);
+            if (backup) {
+                state = JSON.parse(backup);
+                if (ensureStep2StateSchema(state)) needSave = true;
+            }
+        } catch (e2) { }
+    }
+
+    if (needSave) {
+        saveStep2State(state);
+    }
+
+    if (syncUI) {
+        if (state.input.raw) document.getElementById('expandInput').value = state.input.raw;
+        if (state.output.expanded) document.getElementById('expandOutput').value = state.output.expanded;
+        if (state.qaConfig.threshold !== undefined) {
+            document.getElementById('qaThreshold').value = sanitizeThreshold(state.qaConfig.threshold);
+        }
+
+        if (state.output.qa) {
+            const qaResultEl = document.getElementById('qaResult');
+            if (qaResultEl) {
+                qaResultEl.innerText = state.output.qa;
+                qaResultEl.style.display = 'block';
+            }
+        }
+
+        renderStep2FromState(state);
+
+        if (state.output.nblm && state.output.nblm !== '(提示词将在此生成)') {
+            const nblmEl = document.getElementById('p-nlprompt');
+            if (nblmEl) {
+                nblmEl.innerText = state.output.nblm;
+                nblmEl.style.display = 'block';
+                const copyBtn = document.getElementById('copyNblmBtn');
+                if (copyBtn) copyBtn.style.display = 'inline-block';
+            }
+        }
+    }
+
+    return state;
 }
 
 function updatePipeUI(step, status, timeMs = null) {
@@ -1034,9 +1437,19 @@ async function runStep(step) {
         return false;
     }
 
-    if (step === 'expand') return await doExpand(api);
-    if (step === 'qa') return await doQA(api);
-    if (step === 'nblm') return await doNBLM();
+    if (step === 'expand') {
+        const runId = startStep2Run('expanding', 'expand');
+        return await doExpand(api, runId);
+    }
+    if (step === 'qa') {
+        const runId = startStep2Run('qa_checking', 'qa');
+        return await doQA(api, runId);
+    }
+    if (step === 'nblm') {
+        const state = loadStep2State(false);
+        const runId = state.pipeline.activeRunId || startStep2Run('idle', 'idle');
+        return await doNBLM(runId);
+    }
 }
 
 async function runPipeline() {
@@ -1044,13 +1457,8 @@ async function runPipeline() {
     btn.disabled = true;
     btn.innerText = '⏳ 全流程执行中...';
 
-    // reset UI
+    // reset progress dots only, keep previous outputs until successful overwrite
     ['expand', 'qa', 'nblm'].forEach(s => updatePipeUI(s, 'idle'));
-    document.getElementById('expandOutput').value = '';
-    document.getElementById('qaResult').style.display = 'none';
-    document.getElementById('qaGate').style.display = 'none';
-    document.getElementById('p-nlprompt').style.display = 'none';
-    document.getElementById('copyNblmBtn').style.display = 'none';
 
     const api = getSlotApi('step2');
     if (!api.url || !api.key) {
@@ -1060,20 +1468,29 @@ async function runPipeline() {
         return;
     }
 
-    let ok = await doExpand(api);
-    if (ok) ok = await doQA(api);
-    if (ok) await doNBLM();
+    const runId = startStep2Run('expanding', 'expand');
+    let ok = await doExpand(api, runId);
+    if (ok) ok = await doQA(api, runId);
+    if (ok) await doNBLM(runId);
 
     btn.disabled = false;
     btn.innerText = '▶️ 一键执行全流程';
 }
 
-async function doExpand(api) {
+async function doExpand(api, runId) {
+    if (!runId) {
+        runId = startStep2Run('expanding', 'expand');
+    }
+    if (!setStep2PipelineState(runId, 'expanding', 'expand')) {
+        return false;
+    }
+
     updatePipeUI('expand', 'running');
     const input = document.getElementById('expandInput').value.trim();
     if (!input) {
         document.getElementById('expandStatus').innerHTML = '<span style="color:#ef4444;">请输入你要扩写的原稿</span>';
         updatePipeUI('expand', 'error');
+        setStep2PipelineState(runId, 'failed', 'expand', '请输入你要扩写的原稿');
         return false;
     }
     document.getElementById('expandStatus').innerHTML = '<span style="color:var(--primary);">正在扩写(约需30-60秒)...</span>';
@@ -1095,29 +1512,51 @@ async function doExpand(api) {
         clearTimeout(timeout);
         const data = await resp.json();
         const text = data.choices[0].message.content.trim();
+
+        const state = loadStep2State(false);
+        if (!isStep2RunActive(state, runId)) {
+            return false;
+        }
+
+        state.input.raw = document.getElementById('expandInput').value;
+        state.output.expanded = text;
+        state.pipeline.qaSourceHash = hashText(text);
+        state.pipeline.nblmSourceHash = hashText(text + '|' + (document.getElementById('globalCategory').value || 'emotion'));
+        state.pipeline.status = 'idle';
+        state.pipeline.currentStage = 'expand';
+        state.pipeline.error = '';
+        saveStep2State(state);
+
         document.getElementById('expandOutput').value = text;
         document.getElementById('expandStatus').innerHTML = '<span style="color:#10b981;">扩写成功！</span>';
         updatePipeUI('expand', 'success', Date.now() - startTime);
-        saveStep2State();
         return true;
     } catch (err) {
         document.getElementById('expandStatus').innerHTML = '<span style="color:#ef4444;">扩写失败: ' + escapeHtml(err.message) + '</span>';
         updatePipeUI('expand', 'error', Date.now() - startTime);
+        setStep2PipelineState(runId, 'failed', 'expand', err.message || '扩写失败');
         return false;
     }
 }
 
-async function doQA(api) {
+async function doQA(api, runId) {
+    if (!runId) {
+        runId = startStep2Run('qa_checking', 'qa');
+    }
+    if (!setStep2PipelineState(runId, 'qa_checking', 'qa')) {
+        return false;
+    }
+
     updatePipeUI('qa', 'running');
     const input = document.getElementById('expandOutput').value.trim();
     if (!input) {
         document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">请先完成扩写！</span>';
         updatePipeUI('qa', 'error');
+        setStep2PipelineState(runId, 'failed', 'qa', '请先完成扩写');
         return false;
     }
     document.getElementById('qaStatus').innerHTML = '<span style="color:var(--primary);">正在质检(约需20。秒)...</span>';
     const qaResultEl = document.getElementById('qaResult');
-    qaResultEl.style.display = 'none';
 
     const startTime = Date.now();
     try {
@@ -1136,58 +1575,116 @@ async function doQA(api) {
         clearTimeout(timeout);
         const data = await resp.json();
         const text = data.choices[0].message.content.trim();
-        qaResultEl.innerText = text;
-        qaResultEl.style.display = 'block';
+
+        const state = loadStep2State(false);
+        if (!isStep2RunActive(state, runId)) {
+            return false;
+        }
+
+        const qaReportId = generateQaReportId(runId, text);
+        const threshold = sanitizeThreshold(document.getElementById('qaThreshold').value);
 
         // Parse "总分：X/100" or similar
         let score = 0;
         const scoreMatch = text.match(/总分[^\d]*(\d+)/);
         if (scoreMatch && scoreMatch[1]) {
-            score = parseInt(scoreMatch[1], 10);
+            score = parseInt(scoreMatch[1], 10) || 0;
         }
 
-        const threshold = parseInt(document.getElementById('qaThreshold').value, 10);
-        const gate = document.getElementById('qaGate');
-        gate.style.display = 'block';
+        state.output.qa = text;
+        state.output.qaReportId = qaReportId;
+        state.qaConfig.threshold = threshold;
+        state.pipeline.qaSourceHash = hashText(input);
+        state.output.qaSourceHash = state.pipeline.qaSourceHash;
+        state.pipeline.currentStage = 'qa';
+        state.pipeline.error = '';
 
         if (score >= threshold) {
+            state.pipeline.status = 'qa_passed';
+            state.output.forceContinueToken = '';
+            state.output.forceContinueTokenUsed = false;
+            state.output.forceContinueTokenRunId = '';
+            state.output.forceContinueTokenQaReportId = '';
+            saveStep2State(state);
+
+            qaResultEl.innerText = text;
+            qaResultEl.style.display = 'block';
             document.getElementById('qaStatus').innerHTML = '<span style="color:#10b981;">质检完成！</span>';
-            gate.style.background = '#d1fae5';
-            gate.style.color = '#065f46';
-            gate.innerHTML = '✅ <b>质量门禁通过</b> (得分: ' + score + ' >= 阈值 ' + threshold + ')。允许进入下一步。';
+            renderStep2GateFromState(state);
             updatePipeUI('qa', 'success', Date.now() - startTime);
-            saveStep2State();
             return true;
-        } else {
-            document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检未达标！</span>';
-            gate.style.background = '#fef2f2';
-            gate.style.color = '#991b1b';
-            gate.innerHTML = '❌ <b>质量门禁未通过</b> (得分: ' + (score || '解析失败') + ' &lt; 阈值 ' + threshold + ')。请根据建议修改扩写稿后重跑质检。';
-            updatePipeUI('qa', 'error', Date.now() - startTime);
-            saveStep2State();
-            return false;
         }
+
+        const token = generateStep2Token();
+        state.pipeline.status = 'qa_blocked';
+        state.output.forceContinueToken = token;
+        state.output.forceContinueTokenUsed = false;
+        state.output.forceContinueTokenRunId = runId;
+        state.output.forceContinueTokenQaReportId = qaReportId;
+        saveStep2State(state);
+
+        qaResultEl.innerText = text;
+        qaResultEl.style.display = 'block';
+
+        document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检未达标！</span>';
+        renderStep2GateFromState(state);
+        updatePipeUI('qa', 'error', Date.now() - startTime);
+        return false;
     } catch (err) {
         document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检失败: ' + escapeHtml(err.message) + '</span>';
         updatePipeUI('qa', 'error', Date.now() - startTime);
+        setStep2PipelineState(runId, 'failed', 'qa', err.message || '质检失败');
         return false;
     }
 }
 
-async function doNBLM() {
+async function doNBLM(runId, options = {}) {
+    if (!runId) {
+        runId = startStep2Run('idle', 'idle');
+    }
+
+    const stateBefore = loadStep2State(false);
+    if (!isStep2RunActive(stateBefore, runId)) {
+        return false;
+    }
+
+    const canForce = isValidForceContinueToken(stateBefore, options.forceContinueToken || '', runId);
+    if (!isStep2QaPassedStatus(stateBefore.pipeline.status) && !canForce) {
+        document.getElementById('nblmStatus').innerHTML = '<span style="color:#ef4444;">QA 未通过，无法进入提示词生成。</span>';
+        updatePipeUI('nblm', 'error');
+        return false;
+    }
+
+    if (!setStep2PipelineState(runId, 'nblm_generating', 'nblm')) {
+        return false;
+    }
+
     updatePipeUI('nblm', 'running');
     const startTime = Date.now();
 
-    // Check gate status (or skip if manual QA was approved) - here we just check if text exists
     const input = document.getElementById('expandOutput').value.trim();
     if (!input) {
         document.getElementById('nblmStatus').innerHTML = '<span style="color:#ef4444;">无待读母稿！请先完成扩写。</span>';
         updatePipeUI('nblm', 'error');
+        setStep2PipelineState(runId, 'failed', 'nblm', '无待读母稿');
         return false;
     }
 
     const currentCategory = document.getElementById('globalCategory').value || 'emotion';
     const prompt = (typeof getNblmPrompt === 'function') ? getNblmPrompt(currentCategory) : window.promptDB[currentCategory].nblm;
+
+    const state = loadStep2State(false);
+    if (!isStep2RunActive(state, runId)) {
+        return false;
+    }
+
+    state.output.nblm = prompt;
+    state.pipeline.nblmSourceHash = hashText(input + '|' + currentCategory);
+    state.output.nblmSourceHash = state.pipeline.nblmSourceHash;
+    state.pipeline.status = 'done';
+    state.pipeline.currentStage = 'nblm';
+    state.pipeline.error = '';
+    saveStep2State(state);
 
     document.getElementById('nblmStatus').innerHTML = '<span style="color:#10b981;">提示词已生成！</span>';
     document.getElementById('p-nlprompt').innerText = prompt;
@@ -1195,12 +1692,30 @@ async function doNBLM() {
     document.getElementById('copyNblmBtn').style.display = 'inline-block';
 
     updatePipeUI('nblm', 'success', Date.now() - startTime);
-    saveStep2State();
     return true;
 }
+
+window.forceContinueOnce = async function (token) {
+    const state = loadStep2State(false);
+    const runId = state.pipeline.activeRunId;
+
+    if (!isValidForceContinueToken(state, token, runId)) {
+        showToast('强制继续令牌无效或已过期。', '#ef4444');
+        return false;
+    }
+
+    state.output.forceContinueTokenUsed = true;
+    state.output.forceContinueToken = '';
+    state.pipeline.status = 'qa_passed';
+    state.pipeline.currentStage = 'qa';
+    state.pipeline.error = '';
+    saveStep2State(state);
+    renderStep2GateFromState(state);
+
+    return await doNBLM(runId, { forceContinueToken: token });
+};
 
 initFlowControls();
 initPersistence();
 loadStep2State();
 loadApiConfig();
-
