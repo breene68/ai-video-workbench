@@ -137,45 +137,120 @@
                 </div>
             </div>
 
-            <!-- Step 2: 语音生成 -->
+            <!-- Step 2: 扩写 + 质检 + NotebookLM -->
             <div id="step2" class="step-panel">
-                <h2>第二步：NotebookLM 专属“驯服”攻略</h2>
-                <p class="subtitle">把你找到的爆款文案喂给 NotebookLM，用强力指令逼它生成符合当前赛道的播客。</p>
+                <h2>第二步：原稿扩写 → 质量门禁 → NotebookLM 提示词</h2>
+                <p class="subtitle">把你找到的爆款文案，通过 AI 扩写为可播化母稿，经过质量门禁后自动生成 NotebookLM 音频自定义提示词。</p>
 
-                <div class="card">
-                    <h3 style="display: flex; align-items: center; justify-content: space-between;">
-                        <span>🛠️ 正确喂给 NotebookLM 的方法</span>
-                        <a href="https://notebooklm.google.com/" target="_blank" rel="noopener noreferrer"
-                            style="font-size: 0.9rem; background: var(--primary); color: white; padding: 5px 12px; border-radius: 6px; text-decoration: none;">🚀
-                            前往 NotebookLM</a>
-                    </h3>
-                    <ul class="checklist">
-                        <li><input type="checkbox" id="chk2-1"><label for="chk2-1"><b>上传来源：</b>把你找到的“爆款文案/逐字稿”，存为 TXT
-                                文本，上传到 NotebookLM。</label></li>
-                        <li><input type="checkbox" id="chk2-2"><label
-                                for="chk2-2"><b>打开设置：</b>点击“生成音频概览”旁边的【自定义】按钮，准备输入下方的控场指令。</label></li>
-                    </ul>
+                <!-- Step 2 API Config -->
+                <div class="step-api-cfg" data-slot="step2"></div>
+
+                <!-- Pipeline Control Bar -->
+                <div class="card" style="border-left: 4px solid var(--primary);">
+                    <h3>🚀 一键全流程</h3>
+                    <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:12px;">依次执行：扩写 → 质检 → 生成提示词。任一步失败可单独重跑。</p>
+                    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                        <button id="pipelineBtn" onclick="runPipeline()">▶️ 一键执行全流程</button>
+                        <label style="font-size:0.85rem; color:var(--text-muted);">质量门禁阈值：
+                            <select id="qaThreshold" onchange="saveStep2State()">
+                                <option value="70">70分</option>
+                                <option value="75" selected>75分（推荐）</option>
+                                <option value="80">80分</option>
+                            </select>
+                        </label>
+                    </div>
+                    <!-- Pipeline Status Steps -->
+                    <div class="pipeline-steps" style="margin-top:15px; display:flex; gap:20px; flex-wrap:wrap;">
+                        <div class="pipe-step" id="pipe-expand">
+                            <span class="pipe-dot" id="pipeDot-expand">⬜</span>
+                            <span>① 扩写</span>
+                            <span class="pipe-time" id="pipeTime-expand"></span>
+                        </div>
+                        <div class="pipe-step" id="pipe-qa">
+                            <span class="pipe-dot" id="pipeDot-qa">⬜</span>
+                            <span>② 质检</span>
+                            <span class="pipe-time" id="pipeTime-qa"></span>
+                        </div>
+                        <div class="pipe-step" id="pipe-nblm">
+                            <span class="pipe-dot" id="pipeDot-nblm">⬜</span>
+                            <span>③ 提示词</span>
+                            <span class="pipe-time" id="pipeTime-nblm"></span>
+                        </div>
+                    </div>
                 </div>
 
+                <!-- 2.1 扩写 -->
                 <div class="card">
-                    <h3>🤖 NotebookLM 强力控场咒语 (<span id="nblm-title" style="color:var(--primary);">情感类</span>)</h3>
-                    <p style="font-size: 0.9rem; margin-bottom: 10px; color: var(--text-muted);">这段话专治 NotebookLM
-                        爱加戏的毛病，全选复制粘贴进去：</p>
-                    <div class="prompt-box" id="p-nlprompt">你们是一档专门针对中国50岁以上中老年女性的情感电台主持人（一男一女）。
+                    <h3 style="display:flex; align-items:center; justify-content:space-between;">
+                        <span>📝 2.1 原稿 → 可播化母稿（扩写）</span>
+                        <button class="outline" onclick="runStep('expand')" style="font-size:0.8rem; padding:4px 10px;" id="btn-expand">🔄 单独重跑</button>
+                    </h3>
+                    <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:10px;">
+                        粘贴 Step 1 中找到的原稿（或爆款拆解器产出的新稿），AI 将扩写为 800-1200字 的可播化母稿。</p>
+                    <textarea id="expandInput" rows="6" placeholder="在此粘贴你的原始文案（来自 Step 1 暂存箱或 Step 0 新稿）"></textarea>
+                    <div id="expandStatus" class="fix-status" style="margin-top:8px;"></div>
+                    <h4 style="margin-top:12px; font-size:1rem;">扩写结果：</h4>
+                    <textarea id="expandOutput" rows="8" placeholder="扩写结果将显示在这里..." style="background:#f8fafc; margin-top:5px;"></textarea>
+                    <button class="outline" onclick="copyContent('expandOutput')" style="margin-top:6px;">📋 复制扩写稿</button>
+                    <!-- Manual Fallback -->
+                    <details id="expandManual" style="margin-top:10px;">
+                        <summary style="cursor:pointer; font-size:0.85rem; color:var(--text-muted);">✍️ 手工模式：复制 Prompt 自行发给大模型</summary>
+                        <div class="prompt-box" id="expandManualPrompt" style="margin-top:8px; font-size:0.85rem;">请将以下文案扩写为800-1200字，适合中老年播客朗读，口语化、接地气、情绪饱满：
 
-                        【必须遵守的核心铁律】：
-                        1. 绝对禁止说“今天我们拿到一份素材”、“根据这份对话记录”等学术性词汇。不要把这当成研讨会！
-                        2. 绝对禁止说“欢迎大家”、“很高兴您能抽出时间”等废话开场白。
-                        3. 请直接进入状态！一开场就用极度接地气、拉家常的语气抛出话题。比如：“这几天啊，有很多老姐妹都在群里抱怨……”或者“人过了五十岁啊，真的是不能心太软”。
-                        4. 对话内容必须完全沉浸在“婆媳矛盾”、“晚年退出儿女生活”、“别给儿女兜底”等真实生活场景中。
-                        5. 【最重要！】音频时长必须控制在 3到5分钟 之间，语言要干练扎心，直切痛点。</div>
-                    <button class="outline" onclick="copyText('p-nlprompt')">📋 复制【NotebookLM 控场指令】</button>
+[在此粘贴原文]</div>
+                        <button class="outline" onclick="copyText('expandManualPrompt')" style="margin-top:6px;">📋 复制扩写 Prompt</button>
+                    </details>
+                </div>
+
+                <!-- 2.2 质检 -->
+                <div class="card">
+                    <h3 style="display:flex; align-items:center; justify-content:space-between;">
+                        <span>🔍 2.2 质量检测（门禁）</span>
+                        <button class="outline" onclick="runStep('qa')" style="font-size:0.8rem; padding:4px 10px;" id="btn-qa">🔄 单独重跑</button>
+                    </h3>
+                    <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:10px;">
+                        AI 对扩写稿进行多维度质量评分。低于阈值将阻断后续步骤，提示修改。</p>
+                    <div id="qaStatus" class="fix-status"></div>
+                    <div id="qaResult" class="prompt-box" style="display:none; white-space:pre-wrap; margin-top:10px;"></div>
+                    <div id="qaGate" style="display:none; margin-top:10px; padding:10px; border-radius:8px;"></div>
+                    <!-- Manual Fallback -->
+                    <details id="qaManual" style="margin-top:10px;">
+                        <summary style="cursor:pointer; font-size:0.85rem; color:var(--text-muted);">✍️ 手工模式：复制质检 Prompt</summary>
+                        <div class="prompt-box" id="qaManualPrompt" style="margin-top:8px; font-size:0.85rem;">请对以下播客文案进行质量打分(满分100)，必须包含“总分：X/100”的字样，并给出修改建议：
+
+[在此粘贴扩写稿]</div>
+                        <button class="outline" onclick="copyText('qaManualPrompt')" style="margin-top:6px;">📋 复制质检 Prompt</button>
+                    </details>
+                </div>
+
+                <!-- 2.3 NotebookLM Prompt Output -->
+                <div class="card">
+                    <h3 style="display:flex; align-items:center; justify-content:space-between;">
+                        <span>🤖 2.3 NotebookLM 音频自定义提示词 (<span id="nblm-title" style="color:var(--primary);">情感类</span>)</span>
+                        <button class="outline" onclick="runStep('nblm')" style="font-size:0.8rem; padding:4px 10px;" id="btn-nblm">🔄 重新生成</button>
+                    </h3>
+                    <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:10px;">
+                        质检通过后，自动根据当前赛道生成 NotebookLM「音频自定义框」提示词。</p>
+                    <div id="nblmStatus" class="fix-status"></div>
+                    <div class="prompt-box" id="p-nlprompt" style="white-space:pre-wrap;">(提示词将在此生成)</div>
+                    <button class="outline" id="copyNblmBtn" onclick="copyText('p-nlprompt')" style="margin-top:6px;">📋 复制【NotebookLM 控场指令】</button>
+                    <div style="margin-top: 15px; background: #fffbeb; padding: 12px; border-radius: 8px; border: 1px solid #fde68a;">
+                        <div style="font-weight: 600; color: #b45309; margin-bottom: 5px;">⚠️ 去生成音频的正确姿势：</div>
+                        <ol style="margin-bottom: 10px; padding-left: 20px; color: var(--text-muted); font-size: 0.9rem;">
+                            <li>打开 NotebookLM 并新建笔记本</li>
+                            <li>将上方的 <b>扩写原稿</b> (不是提示词，是长文) 保存为 TXT 并上传</li>
+                            <li>点击“生成音频概览”右侧的 <b>自定义</b> 按钮</li>
+                            <li>将上方生成的 <b>控场指令</b> 粘贴进去，点击生成</li>
+                        </ol>
+                        <a href="https://notebooklm.google.com/" target="_blank" rel="noopener noreferrer"
+                            style="display:inline-block; font-size:0.9rem; background:var(--primary); color:white; padding:6px 14px; border-radius:6px; text-decoration:none;">🚀 前往 NotebookLM</a>
+                    </div>
                 </div>
 
                 <div class="card" style="border-left: 4px solid #f59e0b;">
                     <h3>⚠️ 关键过渡步骤：提取最终逐字稿</h3>
                     <p style="font-size: 0.9rem; color: var(--text-muted);">NotebookLM 生成的音频有很多自由发挥的词。你必须把下载好的 MP3
-                        拖进桌面的<b>“音视频转文字工具.html”</b>，将音频转换并复制成纯文本。<b>拿着这个纯最终版的文字，再进入下一步！</b></p>
+                        拖进桌面的<b>"音视频转文字工具.html"</b>，将音频转换并复制成纯文本。<b>拿着这个纯最终版的文字，再进入下一步！</b></p>
                 </div>
             </div>
 

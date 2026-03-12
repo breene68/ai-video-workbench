@@ -42,7 +42,15 @@ function updatePrompts(silent = false) {
 
     // Update NotebookLM step
     document.getElementById('nblm-title').innerText = data.title;
-    document.getElementById('p-nlprompt').innerText = data.nblm;
+    const pNblm = document.getElementById('p-nlprompt');
+    const qaGate = document.getElementById('qaGate');
+    const passedQA = qaGate && qaGate.style.display !== 'none' && qaGate.innerHTML.includes('通过');
+    if (pNblm && passedQA) {
+        pNblm.innerText = (typeof getNblmPrompt === 'function') ? getNblmPrompt(category) : data.nblm;
+        if (typeof saveStep2State === 'function') saveStep2State();
+    } else if (pNblm && !passedQA) {
+        pNblm.innerText = '(提示词将在此生成)';
+    }
 
     // Update Image Generation step
     document.getElementById('img-title').innerText = data.title;
@@ -287,6 +295,7 @@ function initPersistence() {
 // --- Per-Step API Configuration (persisted in localStorage) ---
 const SLOT_LABELS = {
     viral: '爆款拆解 API（Step 0）',
+    step2: '扩写与质检 API（Step 2）',
     cleanup: '纠错 API（Step 3.1）',
     storyboard: '分镜 API（Step 3.2）'
 };
@@ -959,7 +968,239 @@ async function runViralAnalysis() {
 
 // =========================================
 
+// =========================================
+// Step 2 Pipeline: Expand -> QA -> NBLM
+// =========================================
+const STEP2_CACHE_KEY = 'm2.step2.state';
+
+function saveStep2State() {
+    const state = {
+        expandInput: document.getElementById('expandInput').value,
+        expandOutput: document.getElementById('expandOutput').value,
+        qaThreshold: document.getElementById('qaThreshold').value,
+        qaResult: document.getElementById('qaResult').innerText,
+        nblmPrompt: document.getElementById('p-nlprompt').innerText,
+        lastRunAt: new Date().toISOString()
+    };
+    try { localStorage.setItem(STEP2_CACHE_KEY, JSON.stringify(state)); } catch (e) { }
+}
+
+function loadStep2State() {
+    try {
+        const cached = localStorage.getItem(STEP2_CACHE_KEY);
+        if (cached) {
+            const state = JSON.parse(cached);
+            if (state.expandInput) document.getElementById('expandInput').value = state.expandInput;
+            if (state.expandOutput) document.getElementById('expandOutput').value = state.expandOutput;
+            if (state.qaThreshold) document.getElementById('qaThreshold').value = state.qaThreshold;
+            if (state.qaResult) {
+                document.getElementById('qaResult').innerText = state.qaResult;
+                document.getElementById('qaResult').style.display = 'block';
+                if (state.qaResult.includes('分')) document.getElementById('qaGate').style.display = 'block';
+            }
+            if (state.nblmPrompt && state.nblmPrompt !== '(提示词将在此生成)') {
+                document.getElementById('p-nlprompt').innerText = state.nblmPrompt;
+                document.getElementById('p-nlprompt').style.display = 'block';
+                document.getElementById('copyNblmBtn').style.display = 'inline-block';
+            }
+        }
+    } catch (e) { }
+}
+
+function updatePipeUI(step, status, timeMs = null) {
+    const dot = document.getElementById('pipeDot-' + step);
+    const timeEl = document.getElementById('pipeTime-' + step);
+    if (!dot) return;
+
+    if (status === 'running') {
+        dot.innerText = '⏳';
+        timeEl.innerText = '';
+    } else if (status === 'success') {
+        dot.innerText = '✅';
+        if (timeMs) timeEl.innerText = (timeMs / 1000).toFixed(1) + 's';
+    } else if (status === 'error') {
+        dot.innerText = '❌';
+        if (timeMs) timeEl.innerText = (timeMs / 1000).toFixed(1) + 's';
+    } else if (status === 'idle') {
+        dot.innerText = '⬜';
+        timeEl.innerText = '';
+    }
+}
+
+async function runStep(step) {
+    const api = getSlotApi('step2');
+    if (step !== 'nblm' && (!api.url || !api.key)) {
+        showToast('请先配置 Step 2 API！', '#f59e0b');
+        return false;
+    }
+
+    if (step === 'expand') return await doExpand(api);
+    if (step === 'qa') return await doQA(api);
+    if (step === 'nblm') return await doNBLM();
+}
+
+async function runPipeline() {
+    const btn = document.getElementById('pipelineBtn');
+    btn.disabled = true;
+    btn.innerText = '⏳ 全流程执行中...';
+
+    // reset UI
+    ['expand', 'qa', 'nblm'].forEach(s => updatePipeUI(s, 'idle'));
+    document.getElementById('expandOutput').value = '';
+    document.getElementById('qaResult').style.display = 'none';
+    document.getElementById('qaGate').style.display = 'none';
+    document.getElementById('p-nlprompt').style.display = 'none';
+    document.getElementById('copyNblmBtn').style.display = 'none';
+
+    const api = getSlotApi('step2');
+    if (!api.url || !api.key) {
+        showToast('请先配置 Step 2 API！', '#f59e0b');
+        btn.disabled = false;
+        btn.innerText = '▶️ 一键执行全流程';
+        return;
+    }
+
+    let ok = await doExpand(api);
+    if (ok) ok = await doQA(api);
+    if (ok) await doNBLM();
+
+    btn.disabled = false;
+    btn.innerText = '▶️ 一键执行全流程';
+}
+
+async function doExpand(api) {
+    updatePipeUI('expand', 'running');
+    const input = document.getElementById('expandInput').value.trim();
+    if (!input) {
+        document.getElementById('expandStatus').innerHTML = '<span style="color:#ef4444;">请输入你要扩写的原稿</span>';
+        updatePipeUI('expand', 'error');
+        return false;
+    }
+    document.getElementById('expandStatus').innerHTML = '<span style="color:var(--primary);">正在扩写(约需30-60秒)...</span>';
+
+    const startTime = Date.now();
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), api.timeoutMs || 60000);
+        const resp = await fetch(api.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
+            body: JSON.stringify({
+                model: api.model || 'gpt-4o-mini',
+                messages: [{ role: 'system', content: '请将以下文案扩写为800-1200字，适合中老年播客朗读，口语化、接地气、情绪饱满：' }, { role: 'user', content: input }],
+                temperature: 0.7
+            }),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        const data = await resp.json();
+        const text = data.choices[0].message.content.trim();
+        document.getElementById('expandOutput').value = text;
+        document.getElementById('expandStatus').innerHTML = '<span style="color:#10b981;">扩写成功！</span>';
+        updatePipeUI('expand', 'success', Date.now() - startTime);
+        saveStep2State();
+        return true;
+    } catch (err) {
+        document.getElementById('expandStatus').innerHTML = '<span style="color:#ef4444;">扩写失败: ' + escapeHtml(err.message) + '</span>';
+        updatePipeUI('expand', 'error', Date.now() - startTime);
+        return false;
+    }
+}
+
+async function doQA(api) {
+    updatePipeUI('qa', 'running');
+    const input = document.getElementById('expandOutput').value.trim();
+    if (!input) {
+        document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">请先完成扩写！</span>';
+        updatePipeUI('qa', 'error');
+        return false;
+    }
+    document.getElementById('qaStatus').innerHTML = '<span style="color:var(--primary);">正在质检(约需20。秒)...</span>';
+    const qaResultEl = document.getElementById('qaResult');
+    qaResultEl.style.display = 'none';
+
+    const startTime = Date.now();
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), api.timeoutMs || 60000);
+        const resp = await fetch(api.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
+            body: JSON.stringify({
+                model: api.model || 'gpt-4o-mini',
+                messages: [{ role: 'system', content: '请对以下播客文案进行质量打分(满分100)，必须包含“总分：X/100”的字样，并给出修改建议：' }, { role: 'user', content: input }],
+                temperature: 0.3
+            }),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        const data = await resp.json();
+        const text = data.choices[0].message.content.trim();
+        qaResultEl.innerText = text;
+        qaResultEl.style.display = 'block';
+
+        // Parse "总分：X/100" or similar
+        let score = 0;
+        const scoreMatch = text.match(/总分[^\d]*(\d+)/);
+        if (scoreMatch && scoreMatch[1]) {
+            score = parseInt(scoreMatch[1], 10);
+        }
+
+        const threshold = parseInt(document.getElementById('qaThreshold').value, 10);
+        const gate = document.getElementById('qaGate');
+        gate.style.display = 'block';
+
+        if (score >= threshold) {
+            document.getElementById('qaStatus').innerHTML = '<span style="color:#10b981;">质检完成！</span>';
+            gate.style.background = '#d1fae5';
+            gate.style.color = '#065f46';
+            gate.innerHTML = '✅ <b>质量门禁通过</b> (得分: ' + score + ' >= 阈值 ' + threshold + ')。允许进入下一步。';
+            updatePipeUI('qa', 'success', Date.now() - startTime);
+            saveStep2State();
+            return true;
+        } else {
+            document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检未达标！</span>';
+            gate.style.background = '#fef2f2';
+            gate.style.color = '#991b1b';
+            gate.innerHTML = '❌ <b>质量门禁未通过</b> (得分: ' + (score || '解析失败') + ' &lt; 阈值 ' + threshold + ')。请根据建议修改扩写稿后重跑质检。';
+            updatePipeUI('qa', 'error', Date.now() - startTime);
+            saveStep2State();
+            return false;
+        }
+    } catch (err) {
+        document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检失败: ' + escapeHtml(err.message) + '</span>';
+        updatePipeUI('qa', 'error', Date.now() - startTime);
+        return false;
+    }
+}
+
+async function doNBLM() {
+    updatePipeUI('nblm', 'running');
+    const startTime = Date.now();
+
+    // Check gate status (or skip if manual QA was approved) - here we just check if text exists
+    const input = document.getElementById('expandOutput').value.trim();
+    if (!input) {
+        document.getElementById('nblmStatus').innerHTML = '<span style="color:#ef4444;">无待读母稿！请先完成扩写。</span>';
+        updatePipeUI('nblm', 'error');
+        return false;
+    }
+
+    const currentCategory = document.getElementById('globalCategory').value || 'emotion';
+    const prompt = (typeof getNblmPrompt === 'function') ? getNblmPrompt(currentCategory) : window.promptDB[currentCategory].nblm;
+
+    document.getElementById('nblmStatus').innerHTML = '<span style="color:#10b981;">提示词已生成！</span>';
+    document.getElementById('p-nlprompt').innerText = prompt;
+    document.getElementById('p-nlprompt').style.display = 'block';
+    document.getElementById('copyNblmBtn').style.display = 'inline-block';
+
+    updatePipeUI('nblm', 'success', Date.now() - startTime);
+    saveStep2State();
+    return true;
+}
+
 initFlowControls();
 initPersistence();
+loadStep2State();
 loadApiConfig();
 
