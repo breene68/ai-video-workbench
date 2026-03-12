@@ -1183,7 +1183,7 @@ function renderStep2FromState(state) {
         if (currentStage === stage) {
             if (['expanding', 'qa_checking', 'nblm_generating'].includes(pipelineStatus)) {
                 stageStatus = 'running';
-            } else if (pipelineStatus === 'failed') {
+            } else if (pipelineStatus === 'failed' || pipelineStatus === 'qa_blocked') {
                 stageStatus = 'failed';
             }
         } else {
