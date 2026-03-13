@@ -45,14 +45,14 @@ function updatePrompts(silent = false) {
 
     // Update NotebookLM step
     document.getElementById('nblm-title').innerText = data.title;
-    const pNblm = document.getElementById('p-nlprompt');
+    const pNblmBase = document.getElementById('p-nlprompt-base');
+    if (pNblmBase) {
+        pNblmBase.innerText = (typeof getNblmPrompt === 'function') ? getNblmPrompt(category) : data.nblm;
+    }
+    
     const step2State = (typeof loadStep2State === 'function') ? loadStep2State(false) : null;
-    const passedQA = step2State ? isStep2QaPassedStatus(step2State.pipeline.status) : false;
-    if (pNblm && passedQA) {
-        pNblm.innerText = (typeof getNblmPrompt === 'function') ? getNblmPrompt(category) : data.nblm;
-        if (typeof saveStep2State === 'function') saveStep2State();
-    } else if (pNblm && !passedQA) {
-        pNblm.innerText = '(提示词将在此生成)';
+    if (step2State && typeof renderStep2FromState === 'function') {
+        renderStep2FromState(step2State);
     }
 
     // Update Image Generation step
@@ -996,6 +996,53 @@ function generateQaReportId(runId, qaText) {
     return 'qar_' + hashText((runId || '') + '|' + (qaText || '') + '|' + Date.now());
 }
 
+function logStep2Event(event, details = {}) {
+    const time = new Date().toLocaleTimeString();
+    console.log(`[Step2 ${time}] ${event}`, details);
+}
+
+function isQaStale(state) {
+    const currentExpanded = document.getElementById('expandOutput').value.trim();
+    const currentHash = hashText(currentExpanded);
+    const currentThreshold = sanitizeThreshold(document.getElementById('qaThreshold').value);
+    
+    return state.pipeline.qaSourceHash !== currentHash || state.pipeline.qaSourceThreshold !== currentThreshold;
+}
+
+function isNblmStale(state) {
+    const currentExpanded = document.getElementById('expandOutput').value.trim();
+    const currentCategory = document.getElementById('globalCategory').value || 'emotion';
+    const currentHash = hashText(currentExpanded + '|' + currentCategory);
+    
+    return state.pipeline.nblmSourceHash !== currentHash;
+}
+
+function onStep2InputChanged() {
+    saveStep2State(); // Snapshot DOM first
+    const state = loadStep2State(false);
+    
+    let stateChanged = false;
+    if (isQaStale(state) || isNblmStale(state)) {
+        if (state.output.forceContinueToken) {
+            state.output.forceContinueToken = '';
+            state.output.forceContinueTokenUsed = false;
+            logStep2Event('Force Token Invalidated (Stale)');
+            stateChanged = true;
+        }
+    }
+    
+    if (stateChanged) {
+        saveStep2State(state);
+    }
+    renderStep2FromState(state);
+}
+
+function decideQaGate(score, threshold) {
+    if (score >= threshold) return 'green';
+    if (score >= threshold - 10) return 'yellow';
+    return 'red';
+}
+
 function isStep2QaPassedStatus(status) {
     return status === 'qa_passed' || status === 'nblm_generating' || status === 'done';
 }
@@ -1049,8 +1096,24 @@ function ensureStep2StateSchema(state) {
         state.pipeline.qaSourceHash = '';
         modified = true;
     }
+    if (typeof state.pipeline.qaSourceThreshold !== 'number') {
+        state.pipeline.qaSourceThreshold = 80;
+        modified = true;
+    }
     if (typeof state.pipeline.nblmSourceHash !== 'string') {
         state.pipeline.nblmSourceHash = '';
+        modified = true;
+    }
+    if (typeof state.pipeline.startTime !== 'number') {
+        state.pipeline.startTime = 0;
+        modified = true;
+    }
+    if (typeof state.pipeline.totalTime !== 'number') {
+        state.pipeline.totalTime = 0;
+        modified = true;
+    }
+    if (!state.pipeline.stageTime) {
+        state.pipeline.stageTime = { expand: 0, qa: 0, nblm: 0 };
         modified = true;
     }
 
@@ -1100,7 +1163,11 @@ function createDefaultStep2State() {
             error: '',
             runId: '', // Legacy support
             qaSourceHash: '',
-            nblmSourceHash: ''
+            qaSourceThreshold: 80,
+            nblmSourceHash: '',
+            startTime: 0,
+            totalTime: 0,
+            stageTime: { expand: 0, qa: 0, nblm: 0 }
         },
         input: {
             raw: ''
@@ -1157,8 +1224,12 @@ function startStep2Run(status = 'idle', currentStage = 'idle') {
     state.pipeline.status = STEP2_STATUSES.has(status) ? status : 'idle';
     state.pipeline.currentStage = currentStage;
     state.pipeline.error = '';
+    state.pipeline.startTime = Date.now();
+    state.pipeline.totalTime = 0;
+    state.pipeline.stageTime = { expand: 0, qa: 0, nblm: 0 };
     saveStep2State(state);
     renderStep2FromState(state);
+    logStep2Event('Run Start', { runId, status, currentStage });
     return runId;
 }
 
@@ -1221,10 +1292,16 @@ function renderStep2FromState(state) {
             if (timeEl) timeEl.innerText = '处理中...';
         } else if (stageStatus === 'success') {
             dot.innerText = '✅';
-            if (timeEl) timeEl.innerText = '完成';
+            if (timeEl) {
+                const elapsed = state.pipeline.stageTime && state.pipeline.stageTime[stage];
+                timeEl.innerText = elapsed ? (elapsed / 1000).toFixed(1) + 's' : '完成';
+            }
         } else if (stageStatus === 'failed') {
             dot.innerText = '❌';
-            if (timeEl) timeEl.innerText = pipelineStatus === 'qa_blocked' ? '未通过' : '失败';
+            if (timeEl) {
+                const elapsed = state.pipeline.stageTime && state.pipeline.stageTime[stage];
+                timeEl.innerText = elapsed ? (elapsed / 1000).toFixed(1) + 's' : (pipelineStatus === 'qa_blocked' ? '未通过' : '失败');
+            }
         } else {
             dot.innerText = '⚪';
             if (timeEl) timeEl.innerText = '等待';
@@ -1233,6 +1310,56 @@ function renderStep2FromState(state) {
 
     // 2. Render QA Gate
     renderStep2GateFromState(state);
+
+    // 3. Render Console Observability
+    const consoleStage = document.getElementById('consoleStage');
+    const consoleStatus = document.getElementById('consoleStatus');
+    const consoleRunId = document.getElementById('consoleRunId');
+    const consoleTotalTime = document.getElementById('consoleTotalTime');
+
+    if (consoleStage) consoleStage.innerText = state.pipeline.currentStage || 'idle';
+    if (consoleRunId) consoleRunId.innerText = state.pipeline.activeRunId ? state.pipeline.activeRunId.substring(0, 8) : '-';
+    if (consoleTotalTime) consoleTotalTime.innerText = state.pipeline.totalTime ? (state.pipeline.totalTime / 1000).toFixed(1) + 's' : '0.0s';
+
+    if (consoleStatus) {
+        let statusText = state.pipeline.status || 'idle';
+        const qaStale = isQaStale(state);
+        const nblmStale = isNblmStale(state);
+
+        if (qaStale && state.pipeline.status !== 'idle' && state.pipeline.status !== 'expanding') {
+            statusText += ' (QA Stale)';
+        }
+        if (nblmStale && state.pipeline.status === 'done') {
+            statusText += ' (NBLM Stale)';
+        }
+        consoleStatus.innerText = statusText;
+        
+        // Final copy release control
+        const copyBtn = document.getElementById('copyNblmBtn');
+        const nblmStatusEl = document.getElementById('nblmStatus');
+        
+        if (state.output.nblm && state.output.nblm !== '(提示词将在此生成)' && state.output.nblm !== '(最终提示词将在此生成)') {
+            if (qaStale || nblmStale) {
+                if (copyBtn) {
+                    copyBtn.disabled = true;
+                    copyBtn.style.opacity = '0.5';
+                    copyBtn.style.cursor = 'not-allowed';
+                }
+                if (nblmStatusEl) {
+                    nblmStatusEl.innerHTML = '<span style="color:#f59e0b;">⚠️ 内容已修改，请重新执行质检/生成以解锁复制。</span>';
+                }
+            } else {
+                if (copyBtn) {
+                    copyBtn.disabled = false;
+                    copyBtn.style.opacity = '1';
+                    copyBtn.style.cursor = 'pointer';
+                }
+                if (nblmStatusEl && state.pipeline.status === 'done') {
+                    nblmStatusEl.innerHTML = '<span style="color:#10b981;">提示词已生成！</span>';
+                }
+            }
+        }
+    }
 }
 
 function renderStep2GateFromState(state) {
@@ -1242,6 +1369,7 @@ function renderStep2GateFromState(state) {
     const status = state.pipeline.status;
     const level = state.output.qaGateLevel || 'red';
     const score = parseQAScoreStrictFallback(state.output.qa);
+    const threshold = state.qaConfig.threshold || 80;
 
     if (status === 'qa_blocked' || level === 'red') {
         gate.style.display = 'block';
@@ -1250,7 +1378,9 @@ function renderStep2GateFromState(state) {
         const token = state.output.forceContinueToken;
         const canForce = !!token && !state.output.forceContinueTokenUsed;
         const scoreText = score > 0 ? String(score) : '解析失败';
-        gate.innerHTML = '❌ <b>质量门禁拦截 (极差)</b> 得分: ' + scoreText + '。扩写稿质量堪忧，必须依据建议大幅修改后重跑，或强制跳过。' +
+        gate.innerHTML = `❌ <b>质量门禁拦截 (极差)</b><br>
+            <span style="font-size: 0.9rem;">当前分数: ${scoreText} | 当前阈值: ${threshold} | 判定等级: ${level}</span><br>
+            <span style="font-size: 0.9rem;">判定原因: 扩写稿质量堪忧，必须依据建议大幅修改后重跑，或强制跳过。</span>` +
             (canForce ? ' <button class="outline" style="margin-left:8px;" onclick="window.forceContinueOnce(\'' + token + '\')">⚠️ 强制继续一次</button>' : '');
         return;
     }
@@ -1259,7 +1389,9 @@ function renderStep2GateFromState(state) {
         gate.style.display = 'block';
         gate.style.background = '#fffbeb';
         gate.style.color = '#92400e';
-        gate.innerHTML = '⚠️ <b>质量门禁预警 (一般)</b> 得分: ' + score + '。扩写稿基本达标，建议手动微调后继续。';
+        gate.innerHTML = `⚠️ <b>质量门禁预警 (一般)</b><br>
+            <span style="font-size: 0.9rem;">当前分数: ${score} | 当前阈值: ${threshold} | 判定等级: ${level}</span><br>
+            <span style="font-size: 0.9rem;">判定原因: 扩写稿基本达标，建议手动微调后继续。</span>`;
         return;
     }
 
@@ -1267,7 +1399,9 @@ function renderStep2GateFromState(state) {
         gate.style.display = 'block';
         gate.style.background = '#d1fae5';
         gate.style.color = '#065f46';
-        gate.innerHTML = '✅ <b>质量门禁通过 (优秀)</b> 得分: ' + score + '。扩写稿非常出色，请放心继续！';
+        gate.innerHTML = `✅ <b>质量门禁通过 (优秀)</b><br>
+            <span style="font-size: 0.9rem;">当前分数: ${score} | 当前阈值: ${threshold} | 判定等级: ${level}</span><br>
+            <span style="font-size: 0.9rem;">判定原因: 扩写稿非常出色，请放心继续！</span>`;
         return;
     }
 
@@ -1321,7 +1455,6 @@ function saveStep2State(customState = null) {
         state.output.expanded = document.getElementById('expandOutput').value;
         state.qaConfig.threshold = sanitizeThreshold(document.getElementById('qaThreshold').value);
         state.output.qa = document.getElementById('qaResult').innerText;
-        state.output.nblm = document.getElementById('p-nlprompt').innerText;
         
         // Sync API config from runtime cache
         const currentApi = getSlotApi('step2');
@@ -1400,13 +1533,18 @@ function loadStep2State(syncUI = true) {
 
         renderStep2FromState(state);
 
-        if (state.output.nblm && state.output.nblm !== '(提示词将在此生成)') {
+        if (state.output.nblm && state.output.nblm !== '(提示词将在此生成)' && state.output.nblm !== '(最终提示词将在此生成)') {
             const nblmEl = document.getElementById('p-nlprompt');
             if (nblmEl) {
                 nblmEl.innerText = state.output.nblm;
                 nblmEl.style.display = 'block';
                 const copyBtn = document.getElementById('copyNblmBtn');
                 if (copyBtn) copyBtn.style.display = 'inline-block';
+            }
+        } else {
+            const nblmEl = document.getElementById('p-nlprompt');
+            if (nblmEl) {
+                nblmEl.innerText = '(最终提示词将在此生成)';
             }
         }
     }
@@ -1530,20 +1668,23 @@ async function doExpand(api, runId) {
 
         state.input.raw = document.getElementById('expandInput').value;
         state.output.expanded = text;
-        state.pipeline.qaSourceHash = hashText(text);
-        state.pipeline.nblmSourceHash = hashText(text + '|' + (document.getElementById('globalCategory').value || 'emotion'));
         state.pipeline.status = 'idle';
         state.pipeline.currentStage = 'expand';
         state.pipeline.error = '';
+        const elapsed = Date.now() - startTime;
+        state.pipeline.totalTime = (state.pipeline.totalTime || 0) + elapsed;
+        state.pipeline.stageTime = state.pipeline.stageTime || { expand: 0, qa: 0, nblm: 0 };
+        state.pipeline.stageTime.expand = elapsed;
         saveStep2State(state);
 
         document.getElementById('expandOutput').value = text;
         document.getElementById('expandStatus').innerHTML = '<span style="color:#10b981;">扩写成功！</span>';
-        updatePipeUI('expand', 'success', Date.now() - startTime);
+        updatePipeUI('expand', 'success', elapsed);
         return true;
     } catch (err) {
+        const elapsed = Date.now() - startTime;
         document.getElementById('expandStatus').innerHTML = '<span style="color:#ef4444;">扩写失败: ' + escapeHtml(err.message) + '</span>';
-        updatePipeUI('expand', 'error', Date.now() - startTime);
+        updatePipeUI('expand', 'error', elapsed);
         setStep2PipelineState(runId, 'failed', 'expand', err.message || '扩写失败');
         return false;
     }
@@ -1616,18 +1757,26 @@ async function doQA(api, runId) {
         const threshold = sanitizeThreshold(document.getElementById('qaThreshold').value);
 
         const score = parseQAScoreStrictFallback(text);
+        const gateLevel = decideQaGate(score, threshold);
 
         state.output.qa = text;
         state.output.qaReportId = qaReportId;
         state.qaConfig.threshold = threshold;
         state.pipeline.qaSourceHash = hashText(input);
+        state.pipeline.qaSourceThreshold = threshold;
         state.output.qaSourceHash = state.pipeline.qaSourceHash;
         state.pipeline.currentStage = 'qa';
         state.pipeline.error = '';
+        const elapsed = Date.now() - startTime;
+        state.pipeline.totalTime = (state.pipeline.totalTime || 0) + elapsed;
+        state.pipeline.stageTime = state.pipeline.stageTime || { expand: 0, qa: 0, nblm: 0 };
+        state.pipeline.stageTime.qa = elapsed;
 
-        if (score >= 80) {
+        logStep2Event('QA Decision', { score, threshold, gateLevel });
+
+        if (gateLevel === 'green' || gateLevel === 'yellow') {
             state.pipeline.status = 'qa_passed';
-            state.output.qaGateLevel = 'green';
+            state.output.qaGateLevel = gateLevel;
             state.output.forceContinueToken = '';
             state.output.forceContinueTokenUsed = false;
             state.output.forceContinueTokenRunId = '';
@@ -1636,24 +1785,9 @@ async function doQA(api, runId) {
 
             qaResultEl.innerText = text;
             qaResultEl.style.display = 'block';
-            document.getElementById('qaStatus').innerHTML = '<span style="color:#10b981;">质检完成 (优)！</span>';
+            document.getElementById('qaStatus').innerHTML = `<span style="color:${gateLevel === 'green' ? '#10b981' : '#f59e0b'};">质检完成 (${gateLevel === 'green' ? '优' : '良'})！</span>`;
             renderStep2GateFromState(state);
-            updatePipeUI('qa', 'success', Date.now() - startTime);
-            return true;
-        } else if (score >= 70) {
-            state.pipeline.status = 'qa_passed';
-            state.output.qaGateLevel = 'yellow';
-            state.output.forceContinueToken = '';
-            state.output.forceContinueTokenUsed = false;
-            state.output.forceContinueTokenRunId = '';
-            state.output.forceContinueTokenQaReportId = '';
-            saveStep2State(state);
-
-            qaResultEl.innerText = text;
-            qaResultEl.style.display = 'block';
-            document.getElementById('qaStatus').innerHTML = '<span style="color:#f59e0b;">质检完成 (良)！</span>';
-            renderStep2GateFromState(state);
-            updatePipeUI('qa', 'success', Date.now() - startTime);
+            updatePipeUI('qa', 'success', elapsed);
             return true;
         }
 
@@ -1671,11 +1805,12 @@ async function doQA(api, runId) {
 
         document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检未达标 (差)！</span>';
         renderStep2GateFromState(state);
-        updatePipeUI('qa', 'error', Date.now() - startTime);
+        updatePipeUI('qa', 'error', elapsed);
         return false;
     } catch (err) {
+        const elapsed = Date.now() - startTime;
         document.getElementById('qaStatus').innerHTML = '<span style="color:#ef4444;">质检失败: ' + escapeHtml(err.message) + '</span>';
-        updatePipeUI('qa', 'error', Date.now() - startTime);
+        updatePipeUI('qa', 'error', elapsed);
         setStep2PipelineState(runId, 'failed', 'qa', err.message || '质检失败');
         return false;
     }
@@ -1688,6 +1823,16 @@ async function doNBLM(runId, options = {}) {
 
     const stateBefore = loadStep2State(false);
     if (!isStep2RunActive(stateBefore, runId)) {
+        return false;
+    }
+
+    if (isNblmStale(stateBefore)) {
+        logStep2Event('NBLM Stale Detected');
+    }
+
+    if (isQaStale(stateBefore)) {
+        document.getElementById('nblmStatus').innerHTML = '<span style="color:#ef4444;">内容或阈值已修改，请先重新执行质检！</span>';
+        updatePipeUI('nblm', 'error');
         return false;
     }
 
@@ -1707,8 +1852,9 @@ async function doNBLM(runId, options = {}) {
 
     const input = document.getElementById('expandOutput').value.trim();
     if (!input) {
+        const elapsed = Date.now() - startTime;
         document.getElementById('nblmStatus').innerHTML = '<span style="color:#ef4444;">无待读母稿！请先完成扩写。</span>';
-        updatePipeUI('nblm', 'error');
+        updatePipeUI('nblm', 'error', elapsed);
         setStep2PipelineState(runId, 'failed', 'nblm', '无待读母稿');
         return false;
     }
@@ -1727,14 +1873,20 @@ async function doNBLM(runId, options = {}) {
     state.pipeline.status = 'done';
     state.pipeline.currentStage = 'nblm';
     state.pipeline.error = '';
+    const elapsed = Date.now() - startTime;
+    state.pipeline.totalTime = (state.pipeline.totalTime || 0) + elapsed;
+    state.pipeline.stageTime = state.pipeline.stageTime || { expand: 0, qa: 0, nblm: 0 };
+    state.pipeline.stageTime.nblm = elapsed;
     saveStep2State(state);
+
+    logStep2Event('Final Prompt Ready', { runId });
 
     document.getElementById('nblmStatus').innerHTML = '<span style="color:#10b981;">提示词已生成！</span>';
     document.getElementById('p-nlprompt').innerText = prompt;
     document.getElementById('p-nlprompt').style.display = 'block';
     document.getElementById('copyNblmBtn').style.display = 'inline-block';
 
-    updatePipeUI('nblm', 'success', Date.now() - startTime);
+    updatePipeUI('nblm', 'success', elapsed);
     return true;
 }
 
@@ -1746,6 +1898,13 @@ window.forceContinueOnce = async function (token) {
         showToast('强制继续令牌无效或已过期。', '#ef4444');
         return false;
     }
+
+    if (isQaStale(state)) {
+        showToast('内容或阈值已修改，请重新执行质检！', '#ef4444');
+        return false;
+    }
+
+    logStep2Event('Force Continue Used', { token, runId });
 
     state.output.forceContinueTokenUsed = true;
     state.output.forceContinueToken = '';

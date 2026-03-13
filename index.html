@@ -152,10 +152,10 @@
                     <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
                         <button id="pipelineBtn" onclick="runPipeline()">▶️ 一键执行全流程</button>
                         <label style="font-size:0.85rem; color:var(--text-muted);">质量门禁阈值：
-                            <select id="qaThreshold" onchange="saveStep2State()">
+                            <select id="qaThreshold" onchange="onStep2InputChanged()">
                                 <option value="70">70分</option>
-                                <option value="75" selected>75分（推荐）</option>
-                                <option value="80">80分</option>
+                                <option value="75">75分</option>
+                                <option value="80" selected>80分（推荐）</option>
                             </select>
                         </label>
                     </div>
@@ -177,6 +177,13 @@
                             <span class="pipe-time" id="pipeTime-nblm"></span>
                         </div>
                     </div>
+                    <!-- Console Observability -->
+                    <div id="step2Console" style="margin-top: 15px; padding: 10px; background: #1e293b; color: #a5b4fc; border-radius: 6px; font-family: monospace; font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 15px;">
+                        <div>阶段: <span id="consoleStage" style="color: #fff;">idle</span></div>
+                        <div>状态: <span id="consoleStatus" style="color: #fff;">idle</span></div>
+                        <div>RunID: <span id="consoleRunId" style="color: #fff;">-</span></div>
+                        <div>总耗时: <span id="consoleTotalTime" style="color: #fff;">0.0s</span></div>
+                    </div>
                 </div>
 
                 <!-- 2.1 扩写 -->
@@ -190,7 +197,7 @@
                     <textarea id="expandInput" rows="6" placeholder="在此粘贴你的原始文案（来自 Step 1 暂存箱或 Step 0 新稿）"></textarea>
                     <div id="expandStatus" class="fix-status" style="margin-top:8px;"></div>
                     <h4 style="margin-top:12px; font-size:1rem;">扩写结果：</h4>
-                    <textarea id="expandOutput" rows="8" placeholder="扩写结果将显示在这里..." style="background:#f8fafc; margin-top:5px;"></textarea>
+                    <textarea id="expandOutput" rows="8" placeholder="扩写结果将显示在这里..." style="background:#f8fafc; margin-top:5px;" oninput="onStep2InputChanged()"></textarea>
                     <button class="outline" onclick="copyContent('expandOutput')" style="margin-top:6px;">📋 复制扩写稿</button>
                     <!-- Manual Fallback -->
                     <details id="expandManual" style="margin-top:10px;">
@@ -232,8 +239,19 @@
                     <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:10px;">
                         质检通过后，自动根据当前赛道生成 NotebookLM「音频自定义框」提示词。</p>
                     <div id="nblmStatus" class="fix-status"></div>
-                    <div class="prompt-box" id="p-nlprompt" style="white-space:pre-wrap;">(提示词将在此生成)</div>
-                    <button class="outline" id="copyNblmBtn" onclick="copyText('p-nlprompt')" style="margin-top:6px;">📋 复制【NotebookLM 控场指令】</button>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <h4 style="font-size: 0.95rem; margin-bottom: 5px; color: var(--text-muted);">基础控场指令 (Base Prompt)</h4>
+                        <div class="prompt-box" id="p-nlprompt-base" style="white-space:pre-wrap; background: #f8fafc; border-color: #e2e8f0; color: #64748b; font-size: 0.85rem;">(基础提示词将在此显示)</div>
+                        <button class="outline" onclick="copyText('p-nlprompt-base')" style="margin-top:6px; font-size: 0.8rem; padding: 4px 10px;">📋 复制基础指令</button>
+                    </div>
+                    
+                    <div>
+                        <h4 style="font-size: 0.95rem; margin-bottom: 5px;">最终生成指令 (Final Prompt)</h4>
+                        <div class="prompt-box" id="p-nlprompt" style="white-space:pre-wrap;">(最终提示词将在此生成)</div>
+                        <button class="outline" id="copyNblmBtn" onclick="copyText('p-nlprompt')" style="margin-top:6px;">📋 复制【NotebookLM 控场指令】</button>
+                    </div>
+
                     <div style="margin-top: 15px; background: #fffbeb; padding: 12px; border-radius: 8px; border: 1px solid #fde68a;">
                         <div style="font-weight: 600; color: #b45309; margin-bottom: 5px;">⚠️ 去生成音频的正确姿势：</div>
                         <ol style="margin-bottom: 10px; padding-left: 20px; color: var(--text-muted); font-size: 0.9rem;">
